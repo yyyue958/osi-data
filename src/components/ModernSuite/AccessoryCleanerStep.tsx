@@ -16,12 +16,8 @@ import {
   FileSpreadsheet, 
   Eye, 
   Download, 
-  RotateCcw, 
   Plus, 
   X,
-  AlertCircle,
-  TrendingDown,
-  Layers,
   Sparkles
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
@@ -39,6 +35,9 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
   onDataProcessed,
   onOpenPreview
 }) => {
+  // FIX: Added local state to actually hold the uploaded Excel data
+  const [uploadedData, setUploadedData] = useState<AccessoryOrderRow[] | null>(null);
+
   const [config, setConfig] = useLocalStorage<CleanAccessoryConfig>('mizuho_acc_clean_config', {
     inputFileName: 'accesary install.xlsx',
     outputFileName: 'accesary_final_cleaned.xlsx',
@@ -55,6 +54,8 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
   const [stats, setStats] = useLocalStorage<PipelineStats | null>('mizuho_acc_clean_stats', null);
   const [cleanedResult, setCleanedResult] = useLocalStorage<AccessoryOrderRow[] | null>('mizuho_acc_clean_result', null);
   const [activePreset, setActivePreset] = useLocalStorage<'standard' | 'strict' | 'all'>('mizuho_acc_clean_preset', 'standard');
+
+  const activeData = uploadedData || rawData; // Use uploaded data if available, else fallback
 
   const toggleOrderType = (type: string) => {
     setConfig(prev => ({
@@ -134,13 +135,15 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
         const ws = wb.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json(ws) as AccessoryOrderRow[];
 
+        setUploadedData(data); // FIX: Actually save the uploaded data to state
         setConfig(prev => ({ ...prev, inputFileName: file.name }));
+        
         setLogs(prev => [
           ...prev,
           {
             timestamp: new Date().toLocaleTimeString(),
             level: 'info',
-            message: `Uploaded custom file: ${file.name} (${data.length} records parsed)`
+            message: `Uploaded custom file: ${file.name} (${data.length} records loaded into memory)`
           }
         ]);
       } catch (err) {
@@ -164,7 +167,7 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
       {
         timestamp: new Date().toLocaleTimeString(),
         level: 'info',
-        message: `Reading dataset '${config.inputFileName}' with ${rawData.length} rows...`
+        message: `Reading dataset '${config.inputFileName}' with ${activeData.length} rows...`
       },
       {
         timestamp: new Date().toLocaleTimeString(),
@@ -174,14 +177,13 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
     ];
 
     setTimeout(() => {
-      // Perform pandas-equivalent filtering in TypeScript
       const filtered: AccessoryOrderRow[] = [];
       let droppedOrderType = 0;
       let droppedCountry = 0;
       let droppedActuals = 0;
       let droppedReason = 0;
 
-      rawData.forEach((row) => {
+      activeData.forEach((row) => {
         const rawActuals = String(row['Total Actuals'] || '0').replace(/[\$,]/g, '').trim();
         const numericActuals = parseFloat(rawActuals) || 0;
 
@@ -195,7 +197,7 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
           return;
         }
 
-        const matchCountry = rowCountry === config.validCountry.toUpperCase();
+        const matchCountry = config.validCountry === 'ALL' ? true : rowCountry === config.validCountry.toUpperCase();
         if (!matchCountry) {
           droppedCountry++;
           return;
@@ -213,7 +215,6 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
           return;
         }
 
-        // Add billing year if missing
         const billingDate = new Date(row['Billing Date']);
         const billingYear = isNaN(billingDate.getFullYear()) ? row['Billing Year'] || 2023 : billingDate.getFullYear();
 
@@ -225,7 +226,6 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
 
       const metechRemaining = filtered.filter(r => String(r['Order Reason']).toUpperCase() === 'METECH').length;
       const tradeInRemaining = filtered.filter(r => String(r['Order Reason']).toUpperCase() === 'TRADE IN').length;
-
       const duration = Math.round(performance.now() - startTime);
 
       newLogs.push(
@@ -247,9 +247,9 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
       );
 
       const statsObj: PipelineStats = {
-        originalRows: rawData.length,
+        originalRows: activeData.length,
         filteredRows: filtered.length,
-        droppedRows: rawData.length - filtered.length,
+        droppedRows: activeData.length - filtered.length,
         warningsCount: 0,
         executionTimeMs: duration,
         details: {
@@ -287,7 +287,6 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       
-      {/* Top Banner / Breadcrumb & Status */}
       <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 text-[11px] font-bold text-emerald-700 uppercase tracking-wider mb-1">
@@ -303,7 +302,6 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
           </p>
         </div>
 
-        {/* Preset Selector */}
         <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-lg border border-slate-200">
           <span className="text-xs text-slate-500 px-2 font-medium">Preset:</span>
           <button
@@ -329,13 +327,10 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
         </div>
       </div>
 
-      {/* Grid: 2 Columns (Configuration vs Actions & Results) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
-        {/* Left Column: File Selection & Smart Filters (7 cols) */}
         <div className="lg:col-span-7 space-y-6">
           
-          {/* Card 1: File Source & Dropzone */}
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
             <div className="flex items-center justify-between pb-2 border-b border-slate-100">
               <div className="flex items-center gap-2.5">
@@ -351,7 +346,6 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               
-              {/* Input File Box */}
               <div className="border border-slate-200 bg-slate-50/70 hover:border-emerald-400 rounded-lg p-3.5 transition-colors relative group">
                 <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">
                   Source Dataset (.xlsx)
@@ -363,7 +357,7 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
                       {config.inputFileName}
                     </p>
                     <p className="text-[11px] text-slate-500 font-mono">
-                      {rawData.length} sample rows loaded
+                      {activeData.length} records loaded
                     </p>
                   </div>
                 </div>
@@ -384,7 +378,7 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
                     className="hidden"
                   />
                   <button
-                    onClick={() => onOpenPreview(rawData, 'Raw Accessory Data Preview', 'raw_accessory.xlsx')}
+                    onClick={() => onOpenPreview(activeData, 'Raw Accessory Data Preview', 'raw_accessory.xlsx')}
                     className="text-[11px] font-semibold text-slate-700 hover:text-slate-900 flex items-center gap-1 bg-white hover:bg-slate-100 px-2.5 py-1 rounded-md border border-slate-200 transition-colors"
                   >
                     <Eye className="w-3 h-3 text-slate-500" />
@@ -393,7 +387,6 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
                 </div>
               </div>
 
-              {/* Output File Box */}
               <div className="border border-slate-200 bg-slate-50/70 rounded-lg p-3.5">
                 <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">
                   Target Cleaned Filename
@@ -414,7 +407,6 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
             </div>
           </div>
 
-          {/* Card 2: Interactive Smart Filters (Tags & Badges) */}
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-5">
             <div className="flex items-center justify-between pb-2 border-b border-slate-100">
               <div className="flex items-center gap-2.5">
@@ -428,7 +420,6 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
               </div>
             </div>
 
-            {/* Filter 1: Valid Order Types Multi-Select Tags */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
@@ -454,7 +445,6 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
                 </div>
               </div>
 
-              {/* Tag Badges Grid */}
               <div className="flex flex-wrap gap-1.5 p-2.5 bg-slate-50 border border-slate-200 rounded-lg min-h-[46px] items-center">
                 {POPULAR_ORDER_TYPES.map((type) => {
                   const isSelected = config.validOrderTypes.includes(type);
@@ -479,7 +469,6 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
                 })}
               </div>
 
-              {/* Custom Order Type Input */}
               <div className="flex items-center gap-2 pt-1">
                 <input
                   type="text"
@@ -498,7 +487,6 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
               </div>
             </div>
 
-            {/* Filter 2: Exclude Reasons Badges */}
             <div className="space-y-2 pt-2 border-t border-slate-100">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
@@ -534,7 +522,6 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
               </div>
             </div>
 
-            {/* Filter 3: Country & Minimum Actuals */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-slate-100">
               <div>
                 <label className="text-xs font-bold text-slate-700 block mb-1.5">
@@ -570,10 +557,8 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
 
         </div>
 
-        {/* Right Column: Execution CTA, Live Analytics & Verification (5 cols) */}
         <div className="lg:col-span-5 space-y-6">
           
-          {/* Action Card with Prominent CTA */}
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
             <h3 className="font-bold text-slate-900 text-sm flex items-center justify-between pb-2 border-b border-slate-100">
               <span>Execute Cleaning Pipeline</span>
@@ -603,13 +588,11 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
               )}
             </button>
 
-            {/* Quick Helper */}
             <p className="text-[11px] text-slate-500 text-center">
               Pre-flight validation runs automatically before writing to disk.
             </p>
           </div>
 
-          {/* Verification & Metrics Dashboard */}
           {stats ? (
             <div className="bg-white border border-emerald-300 rounded-xl p-5 shadow-md space-y-4 animate-in zoom-in-95 duration-200">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -622,7 +605,6 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
                 </span>
               </div>
 
-              {/* 3 Metric Badges */}
               <div className="grid grid-cols-3 gap-2 text-center">
                 <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200">
                   <p className="text-[10px] text-slate-500 uppercase font-bold">Original</p>
@@ -638,7 +620,6 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
                 </div>
               </div>
 
-              {/* Quality & Sanity Verification Badges */}
               <div className="space-y-1.5 pt-1">
                 <div className="flex items-center justify-between text-xs p-2 bg-slate-50 rounded-md border border-slate-200">
                   <span className="text-slate-700 flex items-center gap-1.5 font-medium">
@@ -659,11 +640,10 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                     <span>Country US Sanitization:</span>
                   </span>
-                  <span className="font-mono font-bold text-emerald-700">100% US</span>
+                  <span className="font-mono font-bold text-emerald-700">100% Validated</span>
                 </div>
               </div>
 
-              {/* Action Buttons for Output */}
               <div className="flex items-center gap-2 pt-2">
                 <button
                   id="preview-cleaned-btn"
@@ -686,7 +666,6 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
             </div>
           ) : null}
 
-          {/* Terminal / Live Structured Logs */}
           <div className="bg-[#0f172a] border border-slate-800 rounded-xl p-4 font-mono text-xs space-y-2 shadow-sm">
             <div className="flex items-center justify-between text-slate-400 border-b border-slate-800 pb-2">
               <span className="font-bold text-[11px] uppercase tracking-wider text-slate-300">

@@ -15,8 +15,7 @@ import {
   AlertTriangle,
   BarChart3,
   Sparkles,
-  TrendingDown,
-  Layers
+  Upload
 } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import confetti from 'canvas-confetti';
@@ -34,7 +33,11 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
   onDataProcessed,
   onOpenPreview
 }) => {
-  const [inputFileName] = useState('installed based  08-04-2026(raw).xlsx');
+  // FIX: Local state to hold the uploaded file
+  const [uploadedData, setUploadedData] = useState<InstalledBaseRow[] | null>(null);
+  const activeData = uploadedData || rawInstalledData;
+
+  const [inputFileName, setInputFileName] = useState('installed based  08-04-2026(raw).xlsx');
   const [outputFileName, setOutputFileName] = useLocalStorage('mizuho_installed_output', 'cleaned_states_output.xlsx');
   const [isProcessing, setIsProcessing] = useState(false);
   const [logs, setLogs] = useState<PipelineExecutionLog[]>([]);
@@ -44,6 +47,45 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
   const [excludedRecords, setExcludedRecords] = useLocalStorage<any[] | null>('mizuho_installed_excluded', null);
   const [stateChartData, setStateChartData] = useLocalStorage<{ state: string; count: number }[]>('mizuho_installed_chart', []);
 
+  // FIX: File Upload Handler for Step 3
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data = XLSX.utils.sheet_to_json(ws) as InstalledBaseRow[];
+
+        setUploadedData(data);
+        setInputFileName(file.name);
+        
+        setLogs(prev => [
+          ...prev,
+          {
+            timestamp: new Date().toLocaleTimeString(),
+            level: 'info',
+            message: `Uploaded custom file: ${file.name} (${data.length} records loaded into memory)`
+          }
+        ]);
+      } catch (err) {
+        setLogs(prev => [
+          ...prev,
+          {
+            timestamp: new Date().toLocaleTimeString(),
+            level: 'error',
+            message: `Failed to parse uploaded Excel: ${String(err)}`
+          }
+        ]);
+      }
+    };
+    reader.readAsBinaryString(file);
+  };
+
   const runStateCleaning = () => {
     setIsProcessing(true);
     const startTime = performance.now();
@@ -52,7 +94,7 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
       {
         timestamp: new Date().toLocaleTimeString(),
         level: 'info',
-        message: `Reading '${inputFileName}' with ${rawInstalledData.length} records...`
+        message: `Reading '${inputFileName}' with ${activeData.length} records...`
       },
       {
         timestamp: new Date().toLocaleTimeString(),
@@ -62,7 +104,6 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
     ];
 
     setTimeout(() => {
-      // Build lookup table (abbr -> Full Name, UPPERCASE -> Full Name)
       const lookup: Record<string, string> = {};
       Object.entries(US_STATES_MAP).forEach(([abbr, full]) => {
         lookup[abbr.toUpperCase()] = full;
@@ -73,7 +114,8 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
       const excluded: any[] = [];
       let hyphenYearsRemoved = 0;
 
-      rawInstalledData.forEach(row => {
+      // FIX: Use activeData instead of rawInstalledData
+      activeData.forEach(row => {
         const rawState = String(row['Location State'] || '').trim().toUpperCase();
         const stdState = lookup[rawState];
 
@@ -102,7 +144,6 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
         });
       });
 
-      // Aggregate Top States for Chart
       const stateCounts: Record<string, number> = {};
       matched.forEach(r => {
         const st = r.State_Standardized;
@@ -135,7 +176,7 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
       );
 
       const statsObj: PipelineStats = {
-        originalRows: rawInstalledData.length,
+        originalRows: activeData.length,
         filteredRows: matched.length,
         droppedRows: excluded.length,
         warningsCount: excluded.length,
@@ -179,7 +220,6 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       
-      {/* Top Banner */}
       <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 text-[11px] font-bold text-emerald-700 uppercase tracking-wider mb-1">
@@ -203,13 +243,10 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
         </div>
       </div>
 
-      {/* Grid: 2 Columns */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
-        {/* Left: Files and State Normalizer Settings (7 cols) */}
         <div className="lg:col-span-7 space-y-6">
           
-          {/* Card 1: Files */}
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
             <div className="flex items-center justify-between pb-2 border-b border-slate-100">
               <div className="flex items-center gap-2.5">
@@ -222,8 +259,7 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               
-              {/* Input File Box */}
-              <div className="border border-slate-200 bg-slate-50/70 rounded-lg p-3.5">
+              <div className="border border-slate-200 bg-slate-50/70 hover:border-emerald-400 rounded-lg p-3.5 transition-colors relative group">
                 <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">
                   Raw Installed Base (.xlsx)
                 </label>
@@ -234,13 +270,28 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
                       {inputFileName}
                     </p>
                     <p className="text-[11px] text-slate-500 font-mono">
-                      {rawInstalledData.length} records • Sheet index 0
+                      {activeData.length} records loaded
                     </p>
                   </div>
                 </div>
                 <div className="mt-2.5 flex items-center gap-2">
+                  {/* FIX: New Upload Button for Installed Base */}
+                  <label 
+                    htmlFor="installed-file-upload"
+                    className="cursor-pointer text-[11px] font-semibold text-emerald-700 hover:text-emerald-800 flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded-md border border-emerald-200 transition-colors"
+                  >
+                    <Upload className="w-3 h-3" />
+                    <span>Upload Custom</span>
+                  </label>
+                  <input
+                    id="installed-file-upload"
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    onChange={handleFileUpload}
+                    className="hidden"
+                  />
                   <button
-                    onClick={() => onOpenPreview(rawInstalledData, 'Raw Installed Base Dataset', 'installed_base_raw.xlsx')}
+                    onClick={() => onOpenPreview(activeData, 'Raw Installed Base Dataset', 'installed_base_raw.xlsx')}
                     className="text-[11px] font-semibold text-slate-700 hover:text-slate-900 flex items-center gap-1 bg-white hover:bg-slate-100 px-2.5 py-1 rounded-md border border-slate-200 transition-colors"
                   >
                     <Eye className="w-3 h-3 text-slate-500" />
@@ -249,7 +300,6 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
                 </div>
               </div>
 
-              {/* Output File Box */}
               <div className="border border-slate-200 bg-slate-50/70 rounded-lg p-3.5">
                 <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">
                   Output Multi-Sheet Workbook
@@ -268,7 +318,6 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
             </div>
           </div>
 
-          {/* Card 2: State Transformation Live Demo */}
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
             <div className="flex items-center justify-between pb-2 border-b border-slate-100">
               <div className="flex items-center gap-2.5">
@@ -302,7 +351,6 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
             </div>
           </div>
 
-          {/* Interactive Chart of Cleaned States */}
           {stateChartData.length > 0 && (
             <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-3">
               <div className="flex items-center justify-between pb-2 border-b border-slate-100">
@@ -331,10 +379,8 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
 
         </div>
 
-        {/* Right: Action & Results (5 cols) */}
         <div className="lg:col-span-5 space-y-6">
           
-          {/* Action Card */}
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
             <h3 className="font-bold text-slate-900 text-sm flex items-center justify-between pb-2 border-b border-slate-100">
               <span>Execute State Cleaning</span>
@@ -369,7 +415,6 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
             </p>
           </div>
 
-          {/* Verification Metrics */}
           {stats ? (
             <div className="bg-white border border-emerald-300 rounded-xl p-5 shadow-md space-y-4 animate-in zoom-in-95 duration-200">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -397,7 +442,6 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
                 </div>
               </div>
 
-              {/* Action Buttons */}
               <div className="flex flex-col gap-2 pt-2">
                 <div className="grid grid-cols-2 gap-2">
                   <button
@@ -428,7 +472,6 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
             </div>
           ) : null}
 
-          {/* Terminal / Live Logs */}
           <div className="bg-[#0f172a] border border-slate-800 rounded-xl p-4 font-mono text-xs space-y-2 shadow-sm">
             <div className="flex items-center justify-between text-slate-400 border-b border-slate-800 pb-2">
               <span className="font-bold text-[11px] uppercase tracking-wider text-slate-300">

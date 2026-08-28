@@ -12,11 +12,10 @@ import {
   FileSpreadsheet, 
   Eye, 
   Download, 
-  Plus, 
   ArrowRight,
   ShieldCheck,
   Sparkles,
-  RefreshCw
+  Upload
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import * as XLSX from 'xlsx';
@@ -35,6 +34,10 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
   onMergedDataReady,
   onOpenPreview
 }) => {
+  // FIX: State for uploaded custom Knee Procedures
+  const [uploadedKneeData, setUploadedKneeData] = useState<KneeProcedureRow[] | null>(null);
+  const activeKneeData = uploadedKneeData || kneeProceduresData;
+
   const [config, setConfig] = useLocalStorage<MergeKneeConfig>('mizuho_merge_knee_config', {
     cleanAccessoryFileName: 'accesary_final_cleaned.xlsx',
     kneeProceduresFileName: '2020-2022 Knee procedures.xlsx',
@@ -68,6 +71,45 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
     }
   };
 
+  // FIX: Handle Uploading the Knee Procedures Excel file
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data = XLSX.utils.sheet_to_json(ws) as KneeProcedureRow[];
+
+        setUploadedKneeData(data);
+        setConfig(prev => ({ ...prev, kneeProceduresFileName: file.name }));
+        
+        setLogs(prev => [
+          ...prev,
+          {
+            timestamp: new Date().toLocaleTimeString(),
+            level: 'info',
+            message: `Uploaded custom Knee file: ${file.name} (${data.length} records loaded into memory)`
+          }
+        ]);
+      } catch (err) {
+        setLogs(prev => [
+          ...prev,
+          {
+            timestamp: new Date().toLocaleTimeString(),
+            level: 'error',
+            message: `Failed to parse uploaded Excel: ${String(err)}`
+          }
+        ]);
+      }
+    };
+    reader.readAsBinaryString(file);
+  };
+
   const runMergePipeline = () => {
     setIsProcessing(true);
     const startTime = performance.now();
@@ -80,20 +122,20 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
       {
         timestamp: new Date().toLocaleTimeString(),
         level: 'info',
-        message: `Loading Knee Procedures dataset from '${config.kneeProceduresFileName}' (Row 3 header)...`
+        message: `Loading Knee Procedures dataset from '${config.kneeProceduresFileName}'...`
       }
     ];
 
     setTimeout(() => {
-      // Filter Knee procedures by selected Ship Years
       const filteredKnee: AccessoryOrderRow[] = [];
-      kneeProceduresData.forEach(row => {
+      
+      // FIX: Use activeKneeData instead of kneeProceduresData
+      activeKneeData.forEach(row => {
         const shipYear = typeof row['Ship Year'] === 'number' 
           ? row['Ship Year'] 
           : parseInt(String(row['Ship Year']), 10);
 
         if (config.targetYears.includes(shipYear)) {
-          // Align columns: Matl Availability Date -> Billing Date
           filteredKnee.push({
             'Billing Date': row['Matl Availability Date'],
             'Billing Year': shipYear,
@@ -143,7 +185,7 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
       const statsObj: PipelineStats = {
         originalRows: cleanedAccessoryData.length,
         filteredRows: combinedData.length,
-        droppedRows: kneeProceduresData.length - filteredKnee.length,
+        droppedRows: activeKneeData.length - filteredKnee.length,
         warningsCount: 0,
         executionTimeMs: duration,
         details: {
@@ -179,7 +221,6 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       
-      {/* Top Banner / Breadcrumb */}
       <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 text-[11px] font-bold text-emerald-700 uppercase tracking-wider mb-1">
@@ -195,7 +236,6 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
           </p>
         </div>
 
-        {/* Status Indicator */}
         <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200">
           <ShieldCheck className="w-4 h-4 text-emerald-600" />
           <span className="text-xs text-slate-700 font-medium">
@@ -204,13 +244,10 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
         </div>
       </div>
 
-      {/* Grid: 2 Columns */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
-        {/* Left: Datasets and Year Alignment (7 cols) */}
         <div className="lg:col-span-7 space-y-6">
           
-          {/* Card 1: Dual Input Files */}
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
             <div className="flex items-center justify-between pb-2 border-b border-slate-100">
               <div className="flex items-center gap-2.5">
@@ -221,7 +258,6 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
               </div>
             </div>
 
-            {/* Ingestion Source 1: Cleaned Accessory */}
             <div className="border border-slate-200 bg-slate-50/70 rounded-lg p-3.5 flex items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-200 flex items-center justify-center">
@@ -249,35 +285,48 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
               </button>
             </div>
 
-            {/* Ingestion Source 2: Knee Procedures */}
-            <div className="border border-slate-200 bg-slate-50/70 rounded-lg p-3.5 flex items-center justify-between gap-4">
+            <div className="border border-slate-200 bg-slate-50/70 rounded-lg p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-lg bg-slate-100 text-slate-700 border border-slate-200 flex items-center justify-center">
                   <FileSpreadsheet className="w-5 h-5" />
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <p className="text-xs font-bold text-slate-900">2020-2022 Knee Procedures.xlsx</p>
-                    <span className="text-[10px] bg-slate-100 text-slate-700 border border-slate-300 px-1.5 py-0.5 rounded font-mono">
-                      Sheet: All accessory installs - clean
-                    </span>
+                    <p className="text-xs font-bold text-slate-900 truncate max-w-[200px]" title={config.kneeProceduresFileName}>
+                      {config.kneeProceduresFileName}
+                    </p>
                   </div>
                   <p className="text-[11px] text-slate-500 font-mono">
-                    Headers on Row 3 • {kneeProceduresData.length} total rows
+                    {activeKneeData.length} records loaded
                   </p>
                 </div>
               </div>
 
-              <button
-                onClick={() => onOpenPreview(kneeProceduresData, 'Knee Procedures Dataset Preview', 'knee_procedures.xlsx')}
-                className="text-xs text-slate-700 hover:text-slate-900 font-semibold flex items-center gap-1 bg-white hover:bg-slate-100 px-2.5 py-1.5 rounded-md border border-slate-200 transition-colors"
-              >
-                <Eye className="w-3.5 h-3.5 text-slate-500" />
-                <span>Preview</span>
-              </button>
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <label 
+                  htmlFor="knee-file-upload"
+                  className="cursor-pointer text-[11px] font-semibold text-emerald-700 hover:text-emerald-800 flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1.5 rounded-md border border-emerald-200 transition-colors"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Upload Custom</span>
+                </label>
+                <input
+                  id="knee-file-upload"
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+                <button
+                  onClick={() => onOpenPreview(activeKneeData, 'Knee Procedures Dataset Preview', 'knee_procedures.xlsx')}
+                  className="text-xs text-slate-700 hover:text-slate-900 font-semibold flex items-center gap-1 bg-white hover:bg-slate-100 px-2.5 py-1.5 rounded-md border border-slate-200 transition-colors"
+                >
+                  <Eye className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Preview</span>
+                </button>
+              </div>
             </div>
 
-            {/* Column Schema Mapping Callout */}
             <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg flex items-center gap-3 text-xs text-slate-700">
               <span className="font-mono text-slate-700 bg-white px-2 py-1 rounded border border-slate-300 font-semibold">
                 Matl Availability Date
@@ -286,14 +335,13 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
               <span className="font-mono text-emerald-700 bg-emerald-50 px-2 py-1 rounded border border-emerald-200 font-semibold">
                 Billing Date
               </span>
-              <span className="text-[11px] text-slate-500 ml-auto">
-                (Auto-aligned &amp; ShipTo PostalCode included)
+              <span className="text-[11px] text-slate-500 ml-auto hidden sm:inline">
+                (Auto-aligned schema)
               </span>
             </div>
 
           </div>
 
-          {/* Card 2: Interactive Year Chips & Safety Mode */}
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
             <div className="flex items-center justify-between pb-2 border-b border-slate-100">
               <div className="flex items-center gap-2.5">
@@ -306,24 +354,22 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
                 </div>
               </div>
 
-              {/* Quick Preset Buttons */}
               <div className="flex items-center gap-1 text-xs">
                 <button
                   onClick={() => setPresetYears('pre-2017')}
                   className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-emerald-700 rounded-md border border-slate-200 font-semibold"
                 >
-                  &lt; 2017 (Default)
+                  &lt; 2017
                 </button>
                 <button
                   onClick={() => setPresetYears('all')}
                   className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-md border border-slate-200 font-medium"
                 >
-                  All Years
+                  All
                 </button>
               </div>
             </div>
 
-            {/* Year Chips */}
             <div className="flex flex-wrap gap-2 p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
               {availableYears.map((yr) => {
                 const isSelected = config.targetYears.includes(yr);
@@ -343,56 +389,12 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
                 );
               })}
             </div>
-
-            {/* Safe Versioning Setting */}
-            <div className="pt-2 border-t border-slate-100">
-              <label className="text-xs font-bold text-slate-700 block mb-2">
-                Data Persistence Safety Mode
-              </label>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <button
-                  onClick={() => setSaveMode('safe-version')}
-                  className={`p-3 rounded-lg border text-left text-xs transition-all ${
-                    saveMode === 'safe-version'
-                      ? 'border-emerald-500 bg-emerald-50/60 text-slate-900 shadow-sm'
-                      : 'border-slate-200 bg-slate-50/70 text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  <p className="font-bold flex items-center gap-1.5 text-slate-900">
-                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>Safe Timestamped Copy (Recommended)</span>
-                  </p>
-                  <p className="text-[11px] text-slate-500 mt-1">
-                    Prevents accidental corruption if re-run.
-                  </p>
-                </button>
-
-                <button
-                  onClick={() => setSaveMode('in-place')}
-                  className={`p-3 rounded-lg border text-left text-xs transition-all ${
-                    saveMode === 'in-place'
-                      ? 'border-emerald-500 bg-emerald-50/60 text-slate-900 shadow-sm'
-                      : 'border-slate-200 bg-slate-50/70 text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  <p className="font-bold text-slate-900">
-                    In-Place Append (Legacy Behavior)
-                  </p>
-                  <p className="text-[11px] text-slate-500 mt-1">
-                    Updates clean file with backup copy created.
-                  </p>
-                </button>
-              </div>
-            </div>
-
           </div>
 
         </div>
 
-        {/* Right: Actions, Metrics, Logs (5 cols) */}
         <div className="lg:col-span-5 space-y-6">
           
-          {/* Action Card */}
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
             <h3 className="font-bold text-slate-900 text-sm flex items-center justify-between pb-2 border-b border-slate-100">
               <span>Execute Merge &amp; Append</span>
@@ -427,7 +429,6 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
             </p>
           </div>
 
-          {/* Verification Metrics */}
           {stats ? (
             <div className="bg-white border border-emerald-300 rounded-xl p-5 shadow-md space-y-4 animate-in zoom-in-95 duration-200">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -455,7 +456,6 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
                 </div>
               </div>
 
-              {/* Action Buttons */}
               <div className="flex items-center gap-2 pt-2">
                 <button
                   id="preview-merged-btn"
@@ -477,7 +477,6 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
             </div>
           ) : null}
 
-          {/* Terminal / Live Structured Logs */}
           <div className="bg-[#0f172a] border border-slate-800 rounded-xl p-4 font-mono text-xs space-y-2 shadow-sm">
             <div className="flex items-center justify-between text-slate-400 border-b border-slate-800 pb-2">
               <span className="font-bold text-[11px] uppercase tracking-wider text-slate-300">

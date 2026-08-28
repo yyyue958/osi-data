@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useRef } from 'react';
+import Papa from 'papaparse';
 import { ActiveView, AccessoryOrderRow, KneeProcedureRow, InstalledBaseRow } from './types';
 import { 
   SAMPLE_ACCESSORY_DATA, 
@@ -18,12 +19,46 @@ export default function App() {
   const [kneeData, setKneeData] = useLocalStorage<KneeProcedureRow[]>('mizuho_knee_data', SAMPLE_KNEE_PROCEDURES_DATA);
   const [installedData, setInstalledData] = useLocalStorage<InstalledBaseRow[]>('mizuho_installed_data', SAMPLE_INSTALLED_BASE_DATA);
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Generic CSV file parser using PapaParse for large datasets
+  const handleFileUpload = (
+    e: React.ChangeEvent<HTMLInputElement>,
+    datasetType: 'accessory' | 'knee' | 'installed'
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      dynamicTyping: true,
+      complete: (results) => {
+        const parsedRows = results.data as any[];
+        if (datasetType === 'accessory') {
+          setAccessoryData(parsedRows as AccessoryOrderRow[]);
+        } else if (datasetType === 'knee') {
+          setKneeData(parsedRows as KneeProcedureRow[]);
+        } else if (datasetType === 'installed') {
+          setInstalledData(parsedRows as InstalledBaseRow[]);
+        }
+        alert(`Successfully imported ${parsedRows.length.toLocaleString()} rows into ${datasetType} data!`);
+      },
+      error: (err) => {
+        alert(`Error parsing CSV file: ${err.message}`);
+      }
+    });
+
+    // Reset input so you can re-upload the same file if needed
+    e.target.value = '';
+  };
+
   const handleResetDemoData = () => {
     if (window.confirm('Are you sure you want to reset all data back to the default samples?')) {
+      localStorage.clear();
       setAccessoryData([...SAMPLE_ACCESSORY_DATA]);
       setKneeData([...SAMPLE_KNEE_PROCEDURES_DATA]);
       setInstalledData([...SAMPLE_INSTALLED_BASE_DATA]);
-      localStorage.clear();
       window.location.reload();
     }
   };
@@ -36,6 +71,50 @@ export default function App() {
         setActiveView={setActiveView}
         onResetDemoData={handleResetDemoData}
       />
+
+      {/* CSV Import Banner */}
+      <div className="bg-white border-b border-slate-200 px-4 py-3 sm:px-6 lg:px-8">
+        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
+          <div className="text-xs text-slate-600">
+            <span className="font-semibold text-slate-800">Current Records: </span>
+            Accessories ({accessoryData.length.toLocaleString()}) | 
+            Knee ({kneeData.length.toLocaleString()}) | 
+            Installed Base ({installedData.length.toLocaleString()})
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1.5 rounded shadow transition font-medium">
+              Upload Accessory CSV
+              <input
+                type="file"
+                accept=".csv"
+                className="hidden"
+                onChange={(e) => handleFileUpload(e, 'accessory')}
+              />
+            </label>
+
+            <label className="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1.5 rounded shadow transition font-medium">
+              Upload Knee CSV
+              <input
+                type="file"
+                accept=".csv"
+                className="hidden"
+                onChange={(e) => handleFileUpload(e, 'knee')}
+              />
+            </label>
+
+            <label className="cursor-pointer bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-1.5 rounded shadow transition font-medium">
+              Upload Installed Base CSV
+              <input
+                type="file"
+                accept=".csv"
+                className="hidden"
+                onChange={(e) => handleFileUpload(e, 'installed')}
+              />
+            </label>
+          </div>
+        </div>
+      </div>
 
       {/* Main Content Area */}
       <main className="flex-1">
@@ -53,9 +132,7 @@ export default function App() {
       {/* Footer */}
       <footer className="bg-[#0f172a] border-t border-slate-800 py-6 text-xs text-slate-400">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-3">
-          <p>
-            Mizuho Data Processing Suite
-          </p>
+          <p>Mizuho Data Processing Suite</p>
         </div>
       </footer>
     </div>

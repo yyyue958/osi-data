@@ -28,6 +28,13 @@ interface AccessoryMergeStepProps {
   onOpenPreview: (data: any[], title: string, filename: string) => void;
 }
 
+// Exactly matches Python target_cols
+const TARGET_COLS = [
+  "Billing Date", "Ship Year", "Order Type", "Material", "Material Description",
+  "Billing Qty", "Total Actuals", "ShipToID", "ShipTo Name", "ShipTo Street",
+  "ShipTo City", "ShipTo Region", "ShipTo PostalCode"
+];
+
 export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
   cleanedAccessoryData,
   kneeProceduresData,
@@ -49,8 +56,7 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [logs, setLogs] = useState<PipelineExecutionLog[]>([]);
   const [stats, setStats] = useLocalStorage<PipelineStats | null>('mizuho_merge_knee_stats', null);
-  const [mergedResult, setMergedResult] = useLocalStorage<AccessoryOrderRow[] | null>('mizuho_merge_knee_result', null);
-  const [saveMode, setSaveMode] = useState<'safe-version' | 'in-place'>('safe-version');
+  const [mergedResult, setMergedResult] = useLocalStorage<any[] | null>('mizuho_merge_knee_result', null);
 
   const availableYears = [2012, 2013, 2014, 2015, 2016, 2017, 2018];
 
@@ -104,7 +110,7 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
     reader.readAsBinaryString(file);
   };
 
-  // FIX: Added header=2 skip and specific sheet logic exactly like the Python script
+  // Skip header=2 and check specific sheet
   const handleKneeFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -115,12 +121,10 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
         const bstr = evt.target?.result;
         const wb = XLSX.read(bstr, { type: 'binary' });
         
-        // Find specific sheet like the Python script, or default to first
         const targetSheetName = "All accessory installs - clean";
         const wsname = wb.SheetNames.includes(targetSheetName) ? targetSheetName : wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
         
-        // { range: 2 } is the exact React equivalent of Python's header=2
         const data = XLSX.utils.sheet_to_json(ws, { range: 2 }) as KneeProcedureRow[];
 
         setUploadedKneeData(data);
@@ -148,69 +152,106 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
       {
         timestamp: new Date().toLocaleTimeString(),
         level: 'info',
-        message: `Loading cleaned accessory dataset (${activeAccessoryData.length} records)...`
+        message: `Loading existing cleaned accessory dataset:\n${config.cleanAccessoryFileName}...`
+      },
+      {
+        timestamp: new Date().toLocaleTimeString(),
+        level: 'info',
+        message: `Loading Knee procedures dataset (headers on Row 3):\n${config.kneeProceduresFileName}...`
       }
     ];
 
     setTimeout(() => {
-      const filteredKnee: AccessoryOrderRow[] = [];
-      
-      activeKneeData.forEach(row => {
-        const shipYear = typeof row['Ship Year'] === 'number' 
-          ? row['Ship Year'] 
-          : parseInt(String(row['Ship Year']), 10);
+      try {
+        newLogs.push({ timestamp: new Date().toLocaleTimeString(), level: 'info', message: `Filtering Knee procedures for Ship Years: ${config.targetYears.join(', ')}` });
 
-        if (config.targetYears.includes(shipYear)) {
-          filteredKnee.push({
-            'Billing Date': row['Matl Availability Date'],
-            'Billing Year': shipYear,
-            'Order Type': row['Order Type'],
-            'ShipTo Country': 'US',
-            'Order Reason': '',
-            'Total Actuals': row['Total Actuals'],
-            'Material': row['Material'],
-            'Material Description': row['Material Description'],
-            'Billing Qty': row['Billing Qty'],
-            'ShipToID': row['ShipToID'],
-            'ShipTo Name': row['ShipTo Name'],
-            'ShipTo Street': row['ShipTo Street'],
-            'ShipTo City': row['ShipTo City'],
-            'ShipTo Region': row['ShipTo Region'],
-            'ShipTo PostalCode': row['ShipTo PostalCode']
+        // 1. Process Accessory Data exactly like Python (subsetting columns & extracting year)
+        const processedAccessory: any[] = [];
+        activeAccessoryData.forEach(row => {
+          const newRow: any = {};
+          
+          let shipYear = row['Ship Year'] || row['Billing Year'];
+          if (shipYear === undefined || shipYear === null || shipYear === '') {
+             const d = new Date(row['Billing Date']);
+             if (!isNaN(d.getFullYear())) shipYear = d.getFullYear();
+          }
+
+          TARGET_COLS.forEach(col => {
+            if (col === 'Ship Year') {
+              newRow[col] = shipYear;
+            } else {
+              newRow[col] = row[col] !== undefined ? row[col] : '';
+            }
           });
-        }
-      });
+          processedAccessory.push(newRow);
+        });
 
-      const combinedData = [...activeAccessoryData, ...filteredKnee];
-      const duration = Math.round(performance.now() - startTime);
+        // 2. Process Knee Data exactly like Python (renaming Matl->Billing Date, Billing Year->Ship Year)
+        const filteredKnee: any[] = [];
+        activeKneeData.forEach(row => {
+          let shipYear = typeof row['Ship Year'] === 'number' ? row['Ship Year'] : parseInt(String(row['Ship Year']), 10);
+          if (isNaN(shipYear) && row['Billing Year']) {
+            shipYear = parseInt(String(row['Billing Year']), 10);
+          }
 
-      newLogs.push(
-        { timestamp: new Date().toLocaleTimeString(), level: 'info', message: `Extracted ${filteredKnee.length} Knee procedures for years [${config.targetYears.join(', ')}]` },
-        { timestamp: new Date().toLocaleTimeString(), level: 'info', message: `Mapped Knee column 'Matl Availability Date' -> 'Billing Date'` },
-        { timestamp: new Date().toLocaleTimeString(), level: 'success', message: `Combined ${activeAccessoryData.length} Cleaned + ${filteredKnee.length} Knee = ${combinedData.length} Total Rows.` }
-      );
+          if (config.targetYears.includes(shipYear)) {
+            const newRow: any = {};
+            TARGET_COLS.forEach(col => {
+              if (col === 'Billing Date') {
+                newRow[col] = row['Matl Availability Date'];
+              } else if (col === 'Ship Year') {
+                newRow[col] = shipYear;
+              } else {
+                newRow[col] = row[col] !== undefined ? row[col] : '';
+              }
+            });
+            filteredKnee.push(newRow);
+          }
+        });
 
-      const statsObj: PipelineStats = {
-        originalRows: activeAccessoryData.length,
-        filteredRows: combinedData.length,
-        droppedRows: activeKneeData.length - filteredKnee.length,
-        warningsCount: 0,
-        executionTimeMs: duration,
-        details: {
-          'Cleaned Accessory Rows': activeAccessoryData.length,
-          'Extracted Knee Rows': filteredKnee.length,
-          'Total Appended Output': combinedData.length,
-          'Target Years': config.targetYears.join(', ')
-        }
-      };
+        newLogs.push({ timestamp: new Date().toLocaleTimeString(), level: 'info', message: `-> Extracted ${filteredKnee.length} rows from target years.` });
+        newLogs.push({ timestamp: new Date().toLocaleTimeString(), level: 'info', message: `Aligning column names (Mapping Knee 'Matl Availability Date' -> 'Billing Date')...` });
+        newLogs.push({ timestamp: new Date().toLocaleTimeString(), level: 'info', message: `Appending Knee records below cleaned accessory dataset...` });
 
-      setLogs(newLogs);
-      setStats(statsObj);
-      setMergedResult(combinedData);
-      setIsProcessing(false);
-      onMergedDataReady(combinedData);
+        // Combine subsets
+        const combinedData = [...processedAccessory, ...filteredKnee];
+        const duration = Math.round(performance.now() - startTime);
 
-      confetti({ particleCount: 40, spread: 60, origin: { y: 0.8 } });
+        newLogs.push(
+          { timestamp: new Date().toLocaleTimeString(), level: 'info', message: `---------------------------------------------` },
+          { timestamp: new Date().toLocaleTimeString(), level: 'info', message: `Original Cleaned Rows:    ${processedAccessory.length}` },
+          { timestamp: new Date().toLocaleTimeString(), level: 'info', message: `Appended Knee Rows:       ${filteredKnee.length}` },
+          { timestamp: new Date().toLocaleTimeString(), level: 'info', message: `Total Combined Rows:      ${combinedData.length}` },
+          { timestamp: new Date().toLocaleTimeString(), level: 'info', message: `---------------------------------------------` },
+          { timestamp: new Date().toLocaleTimeString(), level: 'success', message: `✅ Success! The datasets have been merged and saved.` }
+        );
+
+        const statsObj: PipelineStats = {
+          originalRows: processedAccessory.length,
+          filteredRows: combinedData.length,
+          droppedRows: activeKneeData.length - filteredKnee.length,
+          warningsCount: 0,
+          executionTimeMs: duration,
+          details: {
+            'Cleaned Accessory Rows': processedAccessory.length,
+            'Extracted Knee Rows': filteredKnee.length,
+            'Total Appended Output': combinedData.length,
+            'Target Years': config.targetYears.join(', ')
+          }
+        };
+
+        setLogs(newLogs);
+        setStats(statsObj);
+        setMergedResult(combinedData);
+        setIsProcessing(false);
+        onMergedDataReady(combinedData as AccessoryOrderRow[]);
+
+        confetti({ particleCount: 40, spread: 60, origin: { y: 0.8 } });
+
+      } catch (err) {
+        setLogs(prev => [...prev, { timestamp: new Date().toLocaleTimeString(), level: 'error', message: `❌ ERROR: ${String(err)}` }]);
+        setIsProcessing(false);
+      }
     }, 400);
   };
 
@@ -254,7 +295,7 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
                   <FileSpreadsheet className="w-5 h-5" />
                 </div>
                 <div>
-                  <p className="text-xs font-bold text-slate-900 truncate max-w-[200px]">{config.cleanAccessoryFileName}</p>
+                  <p className="text-xs font-bold text-slate-900 truncate max-w-[200px]" title={config.cleanAccessoryFileName}>{config.cleanAccessoryFileName}</p>
                   <p className="text-[11px] text-slate-500 font-mono">{activeAccessoryData.length} rows ready</p>
                 </div>
               </div>
@@ -276,7 +317,7 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
                   <FileSpreadsheet className="w-5 h-5" />
                 </div>
                 <div>
-                  <p className="text-xs font-bold text-slate-900 truncate max-w-[200px]">{config.kneeProceduresFileName}</p>
+                  <p className="text-xs font-bold text-slate-900 truncate max-w-[200px]" title={config.kneeProceduresFileName}>{config.kneeProceduresFileName}</p>
                   <p className="text-[11px] text-slate-500 font-mono">{activeKneeData.length} records loaded (Header Row 3)</p>
                 </div>
               </div>
@@ -347,18 +388,21 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
                 </div>
               </div>
               <div className="flex gap-2">
-                <button onClick={() => onOpenPreview(mergedResult!, 'Combined Dataset', 'output.xlsx')} className="flex-1 py-2 bg-slate-100 text-slate-800 rounded-md text-xs font-semibold border border-slate-300">Inspect</button>
+                <button onClick={() => onOpenPreview(mergedResult!, 'Combined Dataset', 'output.xlsx')} className="flex-1 py-2 bg-slate-100 text-slate-800 rounded-md text-xs font-semibold border border-slate-300">Inspect Table</button>
                 <button onClick={handleDownloadExcel} className="flex-1 py-2 bg-emerald-600 text-white rounded-md text-xs font-semibold">Download .xlsx</button>
               </div>
             </div>
           )}
 
           <div className="bg-[#0f172a] border border-slate-800 rounded-xl p-4 font-mono text-xs space-y-2 shadow-sm">
-            <div className="text-slate-400 border-b border-slate-800 pb-2 font-bold text-[11px] uppercase">Activity Stream</div>
-            <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
+            <div className="text-slate-400 border-b border-slate-800 pb-2 font-bold text-[11px] uppercase flex justify-between">
+              <span>Results & Verification</span>
+              <button onClick={() => setLogs([])} className="hover:text-white">Clear</button>
+            </div>
+            <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1 pt-2">
               {logs.map((log, idx) => (
-                <div key={idx} className="flex items-start gap-2 text-[11px]">
-                  <span className="text-slate-500">[{log.timestamp}]</span>
+                <div key={idx} className="flex items-start gap-2 text-[11px] whitespace-pre-wrap">
+                  {log.message.includes('---') ? null : <span className="text-slate-500">[{log.timestamp}]</span>}
                   <span className={log.level === 'success' ? 'text-emerald-400' : log.level === 'error' ? 'text-rose-400' : 'text-slate-300'}>{log.message}</span>
                 </div>
               ))}

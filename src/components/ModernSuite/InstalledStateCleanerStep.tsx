@@ -33,7 +33,6 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
   onDataProcessed,
   onOpenPreview
 }) => {
-  // FIX: Local state to hold the uploaded file
   const [uploadedData, setUploadedData] = useState<InstalledBaseRow[] | null>(null);
   const activeData = uploadedData || rawInstalledData;
 
@@ -47,7 +46,6 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
   const [excludedRecords, setExcludedRecords] = useLocalStorage<any[] | null>('mizuho_installed_excluded', null);
   const [stateChartData, setStateChartData] = useLocalStorage<{ state: string; count: number }[]>('mizuho_installed_chart', []);
 
-  // FIX: File Upload Handler for Step 3
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -75,11 +73,7 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
       } catch (err) {
         setLogs(prev => [
           ...prev,
-          {
-            timestamp: new Date().toLocaleTimeString(),
-            level: 'error',
-            message: `Failed to parse uploaded Excel: ${String(err)}`
-          }
+          { timestamp: new Date().toLocaleTimeString(), level: 'error', message: `Failed to parse uploaded Excel: ${String(err)}` }
         ]);
       }
     };
@@ -89,21 +83,23 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
   const runStateCleaning = () => {
     setIsProcessing(true);
     const startTime = performance.now();
+    
+    // Exact Python error check: Verify columns exist first
+    const firstRow = activeData[0] || {};
+    if (!('Location State' in firstRow) || !('IB_Shipped_Year' in firstRow)) {
+      const available = Object.keys(firstRow).slice(0, 10).join(', ');
+      setLogs([{ timestamp: new Date().toLocaleTimeString(), level: 'error', message: `❌ ERROR: Columns missing! Ensure 'Location State' and 'IB_Shipped_Year' exist.\nAvailable columns: ${available}...` }]);
+      setIsProcessing(false);
+      return;
+    }
 
     const newLogs: PipelineExecutionLog[] = [
-      {
-        timestamp: new Date().toLocaleTimeString(),
-        level: 'info',
-        message: `Reading '${inputFileName}' with ${activeData.length} records...`
-      },
-      {
-        timestamp: new Date().toLocaleTimeString(),
-        level: 'info',
-        message: `Standardizing US state names and abbreviations across 50 states...`
-      }
+      { timestamp: new Date().toLocaleTimeString(), level: 'info', message: `Loading data from:\n${inputFileName}...` },
+      { timestamp: new Date().toLocaleTimeString(), level: 'info', message: `Standardizing states...` }
     ];
 
     setTimeout(() => {
+      // 1. Build Dictionary (like Python's lookup update)
       const lookup: Record<string, string> = {};
       Object.entries(US_STATES_MAP).forEach(([abbr, full]) => {
         lookup[abbr.toUpperCase()] = full;
@@ -111,96 +107,81 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
       });
 
       const matched: any[] = [];
-      const excluded: any[] = [];
-      let hyphenYearsRemoved = 0;
+      const not_matched: any[] = [];
+      let years_removed = 0;
 
-      // FIX: Use activeData instead of rawInstalledData
+      // 2. Exact Python Pandas logic equivalent
       activeData.forEach(row => {
         const rawState = String(row['Location State'] || '').trim().toUpperCase();
-        const stdState = lookup[rawState];
+        const stdState = lookup[rawState] || null;
+        
+        // In pandas, df["State_Standardized"] = clean_state.map(lookup) applies to everything
+        const rowWithState = { ...row, State_Standardized: stdState };
 
         if (!stdState) {
-          excluded.push({
-            ...row,
-            Exclusion_Reason: 'Unmatched / Invalid US State'
-          });
+          not_matched.push(rowWithState);
           return;
         }
 
         const rawYear = String(row['IB_Shipped_Year'] || '').trim();
-        if (rawYear === '-' || rawYear === '' || rawYear === 'N/A') {
-          hyphenYearsRemoved++;
-          excluded.push({
-            ...row,
-            State_Standardized: stdState,
-            Exclusion_Reason: "Missing / '-' Ship Year"
-          });
+        if (rawYear === '-') {
+          years_removed++;
+          // Python completely drops these rows, they do not go into Excluded_States!
           return;
         }
 
-        matched.push({
-          ...row,
-          State_Standardized: stdState
-        });
+        matched.push(rowWithState);
       });
 
+      // Prepare Top 10 for log & chart
       const stateCounts: Record<string, number> = {};
       matched.forEach(r => {
         const st = r.State_Standardized;
         stateCounts[st] = (stateCounts[st] || 0) + 1;
       });
 
-      const chartData = Object.entries(stateCounts)
+      const sortedStates = Object.entries(stateCounts)
         .map(([state, count]) => ({ state, count }))
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 7);
+        .sort((a, b) => b.count - a.count);
+
+      const chartData = sortedStates.slice(0, 7);
+      
+      // Simulate pandas value_counts().head(10).to_string()
+      const top10String = sortedStates.slice(0, 10).map(s => `${s.state.padEnd(20)} ${s.count}`).join('\n');
 
       const duration = Math.round(performance.now() - startTime);
 
+      // Exact Python console output mapping
       newLogs.push(
-        {
-          timestamp: new Date().toLocaleTimeString(),
-          level: 'info',
-          message: `Validation: ${matched.length} valid records matched to official US 50-State database.`
-        },
-        {
-          timestamp: new Date().toLocaleTimeString(),
-          level: 'warn',
-          message: `Dropped ${hyphenYearsRemoved} row(s) with IB_Shipped_Year='-' and ${excluded.length - hyphenYearsRemoved} row(s) with non-standard states.`
-        },
-        {
-          timestamp: new Date().toLocaleTimeString(),
-          level: 'success',
-          message: `Success! Multi-sheet Excel workbook ready with 'Cleaned_Matched' (${matched.length}) and 'Excluded_States' (${excluded.length}).`
-        }
+        { timestamp: new Date().toLocaleTimeString(), level: 'info', message: `Filtering out '-' in 'IB_Shipped_Year'...` },
+        { timestamp: new Date().toLocaleTimeString(), level: 'info', message: `Saving results to:\n${outputFileName}...` },
+        { timestamp: new Date().toLocaleTimeString(), level: 'info', message: `----------------------------------------\nTotal original rows:       ${activeData.length}\nRows dropped (Bad State):  ${not_matched.length}\nRows dropped (Year = '-'): ${years_removed}\nFinal usable rows:         ${matched.length}\n----------------------------------------` },
+        { timestamp: new Date().toLocaleTimeString(), level: 'info', message: `Top 10 States in Final Data:\n${top10String}` },
+        { timestamp: new Date().toLocaleTimeString(), level: 'success', message: `✅ Pipeline Complete!` }
       );
 
       const statsObj: PipelineStats = {
         originalRows: activeData.length,
         filteredRows: matched.length,
-        droppedRows: excluded.length,
-        warningsCount: excluded.length,
+        droppedRows: not_matched.length + years_removed,
+        warningsCount: not_matched.length,
         executionTimeMs: duration,
         details: {
           'Cleaned Matched Rows': matched.length,
-          'Excluded Bad State / Hyphen Year': excluded.length,
-          'Hyphen Years Dropped': hyphenYearsRemoved
+          'Excluded Bad State': not_matched.length,
+          'Hyphen Years Dropped': years_removed
         }
       };
 
       setLogs(newLogs);
       setStats(statsObj);
       setCleanedMatched(matched);
-      setExcludedRecords(excluded);
+      setExcludedRecords(not_matched);
       setStateChartData(chartData);
       setIsProcessing(false);
-      onDataProcessed(matched, excluded);
+      onDataProcessed(matched, not_matched);
 
-      confetti({
-        particleCount: 45,
-        spread: 65,
-        origin: { y: 0.8 }
-      });
+      confetti({ particleCount: 45, spread: 65, origin: { y: 0.8 } });
     }, 400);
   };
 
@@ -275,7 +256,6 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
                   </div>
                 </div>
                 <div className="mt-2.5 flex items-center gap-2">
-                  {/* FIX: New Upload Button for Installed Base */}
                   <label 
                     htmlFor="installed-file-upload"
                     className="cursor-pointer text-[11px] font-semibold text-emerald-700 hover:text-emerald-800 flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded-md border border-emerald-200 transition-colors"
@@ -346,7 +326,7 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
               </div>
               <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
                 <p className="text-[10px] text-slate-500 font-mono">Raw: Year = &quot;-&quot;</p>
-                <p className="font-bold text-rose-700 mt-1">→ Excluded Sheet</p>
+                <p className="font-bold text-rose-700 mt-1">→ Dropped</p>
               </div>
             </div>
           </div>
@@ -438,7 +418,7 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
                 </div>
                 <div className="bg-amber-50 p-2.5 rounded-lg border border-amber-200">
                   <p className="text-[10px] text-amber-700 uppercase font-bold">Excluded Rows</p>
-                  <p className="text-lg font-bold text-amber-700 mt-0.5">{stats.droppedRows}</p>
+                  <p className="text-lg font-bold text-amber-700 mt-0.5">{stats.details?.['Excluded Bad State']}</p>
                 </div>
               </div>
 
@@ -475,7 +455,7 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
           <div className="bg-[#0f172a] border border-slate-800 rounded-xl p-4 font-mono text-xs space-y-2 shadow-sm">
             <div className="flex items-center justify-between text-slate-400 border-b border-slate-800 pb-2">
               <span className="font-bold text-[11px] uppercase tracking-wider text-slate-300">
-                Activity Stream
+                Results & Verification
               </span>
               <button
                 onClick={() => setLogs([])}
@@ -485,20 +465,19 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
               </button>
             </div>
 
-            <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
+            {/* FIX: added whitespace-pre-wrap to properly render your \n multi-line messages */}
+            <div className="max-h-64 overflow-y-auto space-y-1.5 pr-1 pt-2">
               {logs.length > 0 ? (
                 logs.map((log, idx) => (
-                  <div key={idx} className="flex items-start gap-2 text-[11px] leading-relaxed">
-                    <span className="text-slate-500 select-none shrink-0">[{log.timestamp}]</span>
+                  <div key={idx} className="flex items-start gap-2 text-[11px] whitespace-pre-wrap leading-relaxed">
+                    {/* Hide timestamp on pure text dividers to perfectly match Python look */}
+                    {!log.message.includes('---') && <span className="text-slate-500 select-none shrink-0">[{log.timestamp}]</span>}
                     <span
                       className={
-                        log.level === 'success'
-                          ? 'text-emerald-400 font-semibold'
-                          : log.level === 'warn'
-                          ? 'text-amber-400'
-                          : log.level === 'error'
-                          ? 'text-rose-400 font-semibold'
-                          : 'text-slate-300'
+                        log.level === 'success' ? 'text-emerald-400 font-semibold'
+                        : log.level === 'warn' ? 'text-amber-400'
+                        : log.level === 'error' ? 'text-rose-400 font-semibold'
+                        : 'text-slate-300'
                       }
                     >
                       {log.message}

@@ -46,6 +46,7 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
   const [excludedRecords, setExcludedRecords] = useLocalStorage<any[] | null>('mizuho_installed_excluded', null);
   const [stateChartData, setStateChartData] = useLocalStorage<{ state: string; count: number }[]>('mizuho_installed_chart', []);
 
+  // SMART AUTO-DETECT FILE UPLOAD
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -53,23 +54,55 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
     const reader = new FileReader();
     reader.onload = (evt) => {
       try {
-        const bstr = evt.target?.result;
-        const wb = XLSX.read(bstr, { type: 'binary' });
+        // 1. Use ArrayBuffer for much better modern Excel compatibility
+        const buffer = new Uint8Array(evt.target?.result as ArrayBuffer);
+        const wb = XLSX.read(buffer, { type: 'array' });
         
-        // FIX: Enforce sheet_name=0 equivalent from Python
-        const wsname = wb.SheetNames[0]; 
-        const ws = wb.Sheets[wsname];
-        const data = XLSX.utils.sheet_to_json(ws) as InstalledBaseRow[];
+        // 2. Smart Auto-Detect: Loop through ALL sheets to find the one with actual data
+        let bestSheetName = wb.SheetNames[0];
+        let maxRows = 0;
+        let bestData: InstalledBaseRow[] = [];
 
-        setUploadedData(data);
+        wb.SheetNames.forEach(sheetName => {
+          const ws = wb.Sheets[sheetName];
+          
+          // Try reading normally (assuming headers on Row 1)
+          let sheetData = XLSX.utils.sheet_to_json(ws) as any[];
+          
+          // If 0 rows found, try skipping the first 2 rows (like your Knee data)
+          if (sheetData.length === 0) {
+            try {
+              sheetData = XLSX.utils.sheet_to_json(ws, { range: 2 }) as any[];
+            } catch (e) {
+              // Ignore range errors for empty sheets
+            }
+          }
+
+          // Keep whichever sheet has the most data
+          if (sheetData.length > maxRows) {
+            maxRows = sheetData.length;
+            bestSheetName = sheetName;
+            bestData = sheetData;
+          }
+        });
+
+        if (bestData.length === 0) {
+          setLogs(prev => [
+            ...prev,
+            { timestamp: new Date().toLocaleTimeString(), level: 'error', message: `❌ Could not find any data. Sheets scanned: [${wb.SheetNames.join(', ')}]` }
+          ]);
+          return;
+        }
+
+        setUploadedData(bestData);
         setInputFileName(file.name);
         
         setLogs(prev => [
           ...prev,
           {
             timestamp: new Date().toLocaleTimeString(),
-            level: 'info',
-            message: `Uploaded custom file: ${file.name} (${data.length} records loaded into memory)`
+            level: 'success',
+            message: `Auto-detected data on sheet "${bestSheetName}". (${bestData.length} records loaded into memory)`
           }
         ]);
       } catch (err) {
@@ -79,7 +112,9 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
         ]);
       }
     };
-    reader.readAsBinaryString(file);
+    
+    // Read as ArrayBuffer instead of BinaryString for better reliability
+    reader.readAsArrayBuffer(file);
   };
 
   const runStateCleaning = () => {

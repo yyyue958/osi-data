@@ -1,0 +1,6 @@
+{
+  "name": "Mizuho Data Processing Suite UX Redesign",
+  "description": "Expert UX audit, interactive modern workflow redesign, and modernized Python/Tkinter and Web implementations for data processing pipelines.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

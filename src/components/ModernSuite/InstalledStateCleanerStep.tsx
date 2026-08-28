@@ -55,7 +55,9 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
       try {
         const bstr = evt.target?.result;
         const wb = XLSX.read(bstr, { type: 'binary' });
-        const wsname = wb.SheetNames[0];
+        
+        // FIX: Enforce sheet_name=0 equivalent from Python
+        const wsname = wb.SheetNames[0]; 
         const ws = wb.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json(ws) as InstalledBaseRow[];
 
@@ -115,18 +117,19 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
         const rawState = String(row['Location State'] || '').trim().toUpperCase();
         const stdState = lookup[rawState] || null;
         
-        // In pandas, df["State_Standardized"] = clean_state.map(lookup) applies to everything
+        // Python sets "State_Standardized" for EVERY row, even if null
         const rowWithState = { ...row, State_Standardized: stdState };
 
+        // If not a valid state, push to not_matched EXACTLY like Python (no custom reason column)
         if (!stdState) {
           not_matched.push(rowWithState);
           return;
         }
 
         const rawYear = String(row['IB_Shipped_Year'] || '').trim();
+        // Python completely filters out "-" years, they DO NOT go into the excluded sheet
         if (rawYear === '-') {
           years_removed++;
-          // Python completely drops these rows, they do not go into Excluded_States!
           return;
         }
 
@@ -195,7 +198,11 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
     XLSX.utils.book_append_sheet(wb, wsMatched, 'Cleaned_Matched');
     XLSX.utils.book_append_sheet(wb, wsExcluded, 'Excluded_States');
 
-    XLSX.writeFile(wb, outputFileName);
+    // Make sure filename ends with .xlsx to prevent corruption
+    let fName = outputFileName;
+    if (!fName.toLowerCase().endsWith('.xlsx')) fName += '.xlsx';
+
+    XLSX.writeFile(wb, fName, { bookType: 'xlsx', type: 'array' });
   };
 
   return (
@@ -465,12 +472,10 @@ export const InstalledStateCleanerStep: React.FC<InstalledStateCleanerStepProps>
               </button>
             </div>
 
-            {/* FIX: added whitespace-pre-wrap to properly render your \n multi-line messages */}
             <div className="max-h-64 overflow-y-auto space-y-1.5 pr-1 pt-2">
               {logs.length > 0 ? (
                 logs.map((log, idx) => (
                   <div key={idx} className="flex items-start gap-2 text-[11px] whitespace-pre-wrap leading-relaxed">
-                    {/* Hide timestamp on pure text dividers to perfectly match Python look */}
                     {!log.message.includes('---') && <span className="text-slate-500 select-none shrink-0">[{log.timestamp}]</span>}
                     <span
                       className={

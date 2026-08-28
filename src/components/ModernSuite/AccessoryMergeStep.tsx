@@ -38,6 +38,10 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
   const [uploadedKneeData, setUploadedKneeData] = useState<KneeProcedureRow[] | null>(null);
   const activeKneeData = uploadedKneeData || kneeProceduresData;
 
+  // FIX: State for uploaded custom Cleaned Accessory Data
+  const [uploadedAccessoryData, setUploadedAccessoryData] = useState<AccessoryOrderRow[] | null>(null);
+  const activeAccessoryData = uploadedAccessoryData || cleanedAccessoryData;
+
   const [config, setConfig] = useLocalStorage<MergeKneeConfig>('mizuho_merge_knee_config', {
     cleanAccessoryFileName: 'accesary_final_cleaned.xlsx',
     kneeProceduresFileName: '2020-2022 Knee procedures.xlsx',
@@ -71,8 +75,47 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
     }
   };
 
-  // FIX: Handle Uploading the Knee Procedures Excel file
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // FIX: Handler for Cleaned Accessory File Upload
+  const handleAccessoryFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data = XLSX.utils.sheet_to_json(ws) as AccessoryOrderRow[];
+
+        setUploadedAccessoryData(data);
+        setConfig(prev => ({ ...prev, cleanAccessoryFileName: file.name }));
+        
+        setLogs(prev => [
+          ...prev,
+          {
+            timestamp: new Date().toLocaleTimeString(),
+            level: 'info',
+            message: `Uploaded custom Accessory file: ${file.name} (${data.length} records loaded)`
+          }
+        ]);
+      } catch (err) {
+        setLogs(prev => [
+          ...prev,
+          {
+            timestamp: new Date().toLocaleTimeString(),
+            level: 'error',
+            message: `Failed to parse Accessory Excel: ${String(err)}`
+          }
+        ]);
+      }
+    };
+    reader.readAsBinaryString(file);
+  };
+
+  // FIX: Handler for Knee Procedures File Upload
+  const handleKneeFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -93,7 +136,7 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
           {
             timestamp: new Date().toLocaleTimeString(),
             level: 'info',
-            message: `Uploaded custom Knee file: ${file.name} (${data.length} records loaded into memory)`
+            message: `Uploaded custom Knee file: ${file.name} (${data.length} records loaded)`
           }
         ]);
       } catch (err) {
@@ -102,7 +145,7 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
           {
             timestamp: new Date().toLocaleTimeString(),
             level: 'error',
-            message: `Failed to parse uploaded Excel: ${String(err)}`
+            message: `Failed to parse Knee Excel: ${String(err)}`
           }
         ]);
       }
@@ -117,7 +160,7 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
       {
         timestamp: new Date().toLocaleTimeString(),
         level: 'info',
-        message: `Loading cleaned accessory dataset (${cleanedAccessoryData.length} records)...`
+        message: `Loading cleaned accessory dataset (${activeAccessoryData.length} records)...`
       },
       {
         timestamp: new Date().toLocaleTimeString(),
@@ -129,7 +172,6 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
     setTimeout(() => {
       const filteredKnee: AccessoryOrderRow[] = [];
       
-      // FIX: Use activeKneeData instead of kneeProceduresData
       activeKneeData.forEach(row => {
         const shipYear = typeof row['Ship Year'] === 'number' 
           ? row['Ship Year'] 
@@ -156,7 +198,8 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
         }
       });
 
-      const combinedData = [...cleanedAccessoryData, ...filteredKnee];
+      // FIX: Combine with activeAccessoryData instead of cleanedAccessoryData
+      const combinedData = [...activeAccessoryData, ...filteredKnee];
       const duration = Math.round(performance.now() - startTime);
 
       newLogs.push(
@@ -173,23 +216,23 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
         {
           timestamp: new Date().toLocaleTimeString(),
           level: 'success',
-          message: `Combined ${cleanedAccessoryData.length} Cleaned Accessory + ${filteredKnee.length} Knee = ${combinedData.length} Total Rows.`
+          message: `Combined ${activeAccessoryData.length} Cleaned Accessory + ${filteredKnee.length} Knee = ${combinedData.length} Total Rows.`
         },
         {
           timestamp: new Date().toLocaleTimeString(),
           level: 'success',
-          message: `Saved output successfully in ${duration}ms (${saveMode === 'safe-version' ? 'Timestamped Version Created' : 'In-Place Overwrite with Backup'}).`
+          message: `Saved output successfully in ${duration}ms.`
         }
       );
 
       const statsObj: PipelineStats = {
-        originalRows: cleanedAccessoryData.length,
+        originalRows: activeAccessoryData.length,
         filteredRows: combinedData.length,
         droppedRows: activeKneeData.length - filteredKnee.length,
         warningsCount: 0,
         executionTimeMs: duration,
         details: {
-          'Cleaned Accessory Rows': cleanedAccessoryData.length,
+          'Cleaned Accessory Rows': activeAccessoryData.length,
           'Extracted Knee Rows': filteredKnee.length,
           'Total Appended Output': combinedData.length,
           'Target Years': config.targetYears.join(', ')
@@ -239,7 +282,7 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
         <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200">
           <ShieldCheck className="w-4 h-4 text-emerald-600" />
           <span className="text-xs text-slate-700 font-medium">
-            Step 1 Dependency: <strong className="text-emerald-700">{cleanedAccessoryData.length} records ready</strong>
+            Accessory Ready: <strong className="text-emerald-700">{activeAccessoryData.length} records</strong>
           </span>
         </div>
       </div>
@@ -258,33 +301,53 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
               </div>
             </div>
 
-            <div className="border border-slate-200 bg-slate-50/70 rounded-lg p-3.5 flex items-center justify-between gap-4">
+            {/* Ingestion Source 1: Cleaned Accessory */}
+            <div className="border border-slate-200 bg-slate-50/70 rounded-lg p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-200 flex items-center justify-center">
                   <FileSpreadsheet className="w-5 h-5" />
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <p className="text-xs font-bold text-slate-900">Cleaned Accessory Dataset</p>
+                    <p className="text-xs font-bold text-slate-900 truncate max-w-[200px]" title={config.cleanAccessoryFileName}>
+                      {uploadedAccessoryData ? config.cleanAccessoryFileName : 'Cleaned Accessory Dataset'}
+                    </p>
                     <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded font-mono font-bold">
-                      From Step 1
+                      {uploadedAccessoryData ? 'Custom Upload' : 'From Step 1'}
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-500 font-mono">
-                    {cleanedAccessoryData.length} rows ready for appending
+                    {activeAccessoryData.length} rows ready for appending
                   </p>
                 </div>
               </div>
 
-              <button
-                onClick={() => onOpenPreview(cleanedAccessoryData, 'Cleaned Accessory Input', 'step1_cleaned.xlsx')}
-                className="text-xs text-slate-700 hover:text-slate-900 font-semibold flex items-center gap-1 bg-white hover:bg-slate-100 px-2.5 py-1.5 rounded-md border border-slate-200 transition-colors"
-              >
-                <Eye className="w-3.5 h-3.5 text-slate-500" />
-                <span>Preview</span>
-              </button>
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <label 
+                  htmlFor="acc-merge-file-upload"
+                  className="cursor-pointer text-[11px] font-semibold text-emerald-700 hover:text-emerald-800 flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1.5 rounded-md border border-emerald-200 transition-colors"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Upload Custom</span>
+                </label>
+                <input
+                  id="acc-merge-file-upload"
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  onChange={handleAccessoryFileUpload}
+                  className="hidden"
+                />
+                <button
+                  onClick={() => onOpenPreview(activeAccessoryData, 'Cleaned Accessory Input', 'step1_cleaned.xlsx')}
+                  className="text-xs text-slate-700 hover:text-slate-900 font-semibold flex items-center gap-1 bg-white hover:bg-slate-100 px-2.5 py-1.5 rounded-md border border-slate-200 transition-colors"
+                >
+                  <Eye className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Preview</span>
+                </button>
+              </div>
             </div>
 
+            {/* Ingestion Source 2: Knee Procedures */}
             <div className="border border-slate-200 bg-slate-50/70 rounded-lg p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-lg bg-slate-100 text-slate-700 border border-slate-200 flex items-center justify-center">
@@ -314,7 +377,7 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
                   id="knee-file-upload"
                   type="file"
                   accept=".xlsx,.xls,.csv"
-                  onChange={handleFileUpload}
+                  onChange={handleKneeFileUpload}
                   className="hidden"
                 />
                 <button

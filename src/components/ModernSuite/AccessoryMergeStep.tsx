@@ -34,11 +34,9 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
   onMergedDataReady,
   onOpenPreview
 }) => {
-  // FIX: State for uploaded custom Knee Procedures
   const [uploadedKneeData, setUploadedKneeData] = useState<KneeProcedureRow[] | null>(null);
   const activeKneeData = uploadedKneeData || kneeProceduresData;
 
-  // FIX: State for uploaded custom Cleaned Accessory Data
   const [uploadedAccessoryData, setUploadedAccessoryData] = useState<AccessoryOrderRow[] | null>(null);
   const activeAccessoryData = uploadedAccessoryData || cleanedAccessoryData;
 
@@ -75,7 +73,6 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
     }
   };
 
-  // FIX: Handler for Cleaned Accessory File Upload
   const handleAccessoryFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -97,24 +94,17 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
           {
             timestamp: new Date().toLocaleTimeString(),
             level: 'info',
-            message: `Uploaded custom Accessory file: ${file.name} (${data.length} records loaded)`
+            message: `Uploaded Clean Accessory file: ${file.name} (${data.length} records)`
           }
         ]);
       } catch (err) {
-        setLogs(prev => [
-          ...prev,
-          {
-            timestamp: new Date().toLocaleTimeString(),
-            level: 'error',
-            message: `Failed to parse Accessory Excel: ${String(err)}`
-          }
-        ]);
+        setLogs(prev => [...prev, { timestamp: new Date().toLocaleTimeString(), level: 'error', message: `Error: ${String(err)}` }]);
       }
     };
     reader.readAsBinaryString(file);
   };
 
-  // FIX: Handler for Knee Procedures File Upload
+  // FIX: Added header=2 skip and specific sheet logic exactly like the Python script
   const handleKneeFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -124,9 +114,14 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
       try {
         const bstr = evt.target?.result;
         const wb = XLSX.read(bstr, { type: 'binary' });
-        const wsname = wb.SheetNames[0];
+        
+        // Find specific sheet like the Python script, or default to first
+        const targetSheetName = "All accessory installs - clean";
+        const wsname = wb.SheetNames.includes(targetSheetName) ? targetSheetName : wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
-        const data = XLSX.utils.sheet_to_json(ws) as KneeProcedureRow[];
+        
+        // { range: 2 } is the exact React equivalent of Python's header=2
+        const data = XLSX.utils.sheet_to_json(ws, { range: 2 }) as KneeProcedureRow[];
 
         setUploadedKneeData(data);
         setConfig(prev => ({ ...prev, kneeProceduresFileName: file.name }));
@@ -136,18 +131,11 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
           {
             timestamp: new Date().toLocaleTimeString(),
             level: 'info',
-            message: `Uploaded custom Knee file: ${file.name} (${data.length} records loaded)`
+            message: `Uploaded Knee file: ${file.name}. Skipped top 2 header rows. (${data.length} records loaded)`
           }
         ]);
       } catch (err) {
-        setLogs(prev => [
-          ...prev,
-          {
-            timestamp: new Date().toLocaleTimeString(),
-            level: 'error',
-            message: `Failed to parse Knee Excel: ${String(err)}`
-          }
-        ]);
+        setLogs(prev => [...prev, { timestamp: new Date().toLocaleTimeString(), level: 'error', message: `Error: ${String(err)}` }]);
       }
     };
     reader.readAsBinaryString(file);
@@ -161,11 +149,6 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
         timestamp: new Date().toLocaleTimeString(),
         level: 'info',
         message: `Loading cleaned accessory dataset (${activeAccessoryData.length} records)...`
-      },
-      {
-        timestamp: new Date().toLocaleTimeString(),
-        level: 'info',
-        message: `Loading Knee Procedures dataset from '${config.kneeProceduresFileName}'...`
       }
     ];
 
@@ -198,31 +181,13 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
         }
       });
 
-      // FIX: Combine with activeAccessoryData instead of cleanedAccessoryData
       const combinedData = [...activeAccessoryData, ...filteredKnee];
       const duration = Math.round(performance.now() - startTime);
 
       newLogs.push(
-        {
-          timestamp: new Date().toLocaleTimeString(),
-          level: 'info',
-          message: `Extracted ${filteredKnee.length} Knee procedures for years [${config.targetYears.join(', ')}]`
-        },
-        {
-          timestamp: new Date().toLocaleTimeString(),
-          level: 'info',
-          message: `Mapped Knee column 'Matl Availability Date' -> 'Billing Date'`
-        },
-        {
-          timestamp: new Date().toLocaleTimeString(),
-          level: 'success',
-          message: `Combined ${activeAccessoryData.length} Cleaned Accessory + ${filteredKnee.length} Knee = ${combinedData.length} Total Rows.`
-        },
-        {
-          timestamp: new Date().toLocaleTimeString(),
-          level: 'success',
-          message: `Saved output successfully in ${duration}ms.`
-        }
+        { timestamp: new Date().toLocaleTimeString(), level: 'info', message: `Extracted ${filteredKnee.length} Knee procedures for years [${config.targetYears.join(', ')}]` },
+        { timestamp: new Date().toLocaleTimeString(), level: 'info', message: `Mapped Knee column 'Matl Availability Date' -> 'Billing Date'` },
+        { timestamp: new Date().toLocaleTimeString(), level: 'success', message: `Combined ${activeAccessoryData.length} Cleaned + ${filteredKnee.length} Knee = ${combinedData.length} Total Rows.` }
       );
 
       const statsObj: PipelineStats = {
@@ -245,11 +210,7 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
       setIsProcessing(false);
       onMergedDataReady(combinedData);
 
-      confetti({
-        particleCount: 40,
-        spread: 60,
-        origin: { y: 0.8 }
-      });
+      confetti({ particleCount: 40, spread: 60, origin: { y: 0.8 } });
     }, 400);
   };
 
@@ -278,161 +239,61 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
             Extracts historical knee procedures, maps column schemas, and appends to the cleaned accessory dataset.
           </p>
         </div>
-
-        <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200">
-          <ShieldCheck className="w-4 h-4 text-emerald-600" />
-          <span className="text-xs text-slate-700 font-medium">
-            Accessory Ready: <strong className="text-emerald-700">{activeAccessoryData.length} records</strong>
-          </span>
-        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
         <div className="lg:col-span-7 space-y-6">
-          
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-              <div className="flex items-center gap-2.5">
-                <div className="w-7 h-7 rounded-md bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold text-xs">
-                  1
-                </div>
-                <h3 className="font-bold text-slate-900 text-sm">Dual Ingestion Sources</h3>
-              </div>
-            </div>
+            <h3 className="font-bold text-slate-900 text-sm border-b border-slate-100 pb-2">1. Dual Ingestion Sources</h3>
 
-            {/* Ingestion Source 1: Cleaned Accessory */}
+            {/* Accessory Upload */}
             <div className="border border-slate-200 bg-slate-50/70 rounded-lg p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-200 flex items-center justify-center">
                   <FileSpreadsheet className="w-5 h-5" />
                 </div>
                 <div>
-                  <div className="flex items-center gap-2">
-                    <p className="text-xs font-bold text-slate-900 truncate max-w-[200px]" title={config.cleanAccessoryFileName}>
-                      {uploadedAccessoryData ? config.cleanAccessoryFileName : 'Cleaned Accessory Dataset'}
-                    </p>
-                    <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded font-mono font-bold">
-                      {uploadedAccessoryData ? 'Custom Upload' : 'From Step 1'}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-slate-500 font-mono">
-                    {activeAccessoryData.length} rows ready for appending
-                  </p>
+                  <p className="text-xs font-bold text-slate-900 truncate max-w-[200px]">{config.cleanAccessoryFileName}</p>
+                  <p className="text-[11px] text-slate-500 font-mono">{activeAccessoryData.length} rows ready</p>
                 </div>
               </div>
-
-              <div className="flex items-center gap-2 w-full sm:w-auto">
-                <label 
-                  htmlFor="acc-merge-file-upload"
-                  className="cursor-pointer text-[11px] font-semibold text-emerald-700 hover:text-emerald-800 flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1.5 rounded-md border border-emerald-200 transition-colors"
-                >
-                  <Upload className="w-3.5 h-3.5" />
-                  <span>Upload Custom</span>
+              <div className="flex items-center gap-2">
+                <label className="cursor-pointer text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1.5 rounded-md border border-emerald-200 hover:bg-emerald-100 transition-colors flex items-center gap-1">
+                  <Upload className="w-3.5 h-3.5" /> Upload Custom
+                  <input type="file" accept=".xlsx,.xls,.csv" onChange={handleAccessoryFileUpload} className="hidden" />
                 </label>
-                <input
-                  id="acc-merge-file-upload"
-                  type="file"
-                  accept=".xlsx,.xls,.csv"
-                  onChange={handleAccessoryFileUpload}
-                  className="hidden"
-                />
-                <button
-                  onClick={() => onOpenPreview(activeAccessoryData, 'Cleaned Accessory Input', 'step1_cleaned.xlsx')}
-                  className="text-xs text-slate-700 hover:text-slate-900 font-semibold flex items-center gap-1 bg-white hover:bg-slate-100 px-2.5 py-1.5 rounded-md border border-slate-200 transition-colors"
-                >
-                  <Eye className="w-3.5 h-3.5 text-slate-500" />
-                  <span>Preview</span>
+                <button onClick={() => onOpenPreview(activeAccessoryData, 'Cleaned Accessory Input', 'step1_cleaned.xlsx')} className="text-xs text-slate-700 bg-white px-2.5 py-1.5 rounded-md border border-slate-200 hover:bg-slate-100 flex items-center gap-1">
+                  <Eye className="w-3.5 h-3.5 text-slate-500" /> Preview
                 </button>
               </div>
             </div>
 
-            {/* Ingestion Source 2: Knee Procedures */}
+            {/* Knee Upload */}
             <div className="border border-slate-200 bg-slate-50/70 rounded-lg p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-lg bg-slate-100 text-slate-700 border border-slate-200 flex items-center justify-center">
                   <FileSpreadsheet className="w-5 h-5" />
                 </div>
                 <div>
-                  <div className="flex items-center gap-2">
-                    <p className="text-xs font-bold text-slate-900 truncate max-w-[200px]" title={config.kneeProceduresFileName}>
-                      {config.kneeProceduresFileName}
-                    </p>
-                  </div>
-                  <p className="text-[11px] text-slate-500 font-mono">
-                    {activeKneeData.length} records loaded
-                  </p>
+                  <p className="text-xs font-bold text-slate-900 truncate max-w-[200px]">{config.kneeProceduresFileName}</p>
+                  <p className="text-[11px] text-slate-500 font-mono">{activeKneeData.length} records loaded (Header Row 3)</p>
                 </div>
               </div>
-
-              <div className="flex items-center gap-2 w-full sm:w-auto">
-                <label 
-                  htmlFor="knee-file-upload"
-                  className="cursor-pointer text-[11px] font-semibold text-emerald-700 hover:text-emerald-800 flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1.5 rounded-md border border-emerald-200 transition-colors"
-                >
-                  <Upload className="w-3.5 h-3.5" />
-                  <span>Upload Custom</span>
+              <div className="flex items-center gap-2">
+                <label className="cursor-pointer text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1.5 rounded-md border border-emerald-200 hover:bg-emerald-100 transition-colors flex items-center gap-1">
+                  <Upload className="w-3.5 h-3.5" /> Upload Custom
+                  <input type="file" accept=".xlsx,.xls,.csv" onChange={handleKneeFileUpload} className="hidden" />
                 </label>
-                <input
-                  id="knee-file-upload"
-                  type="file"
-                  accept=".xlsx,.xls,.csv"
-                  onChange={handleKneeFileUpload}
-                  className="hidden"
-                />
-                <button
-                  onClick={() => onOpenPreview(activeKneeData, 'Knee Procedures Dataset Preview', 'knee_procedures.xlsx')}
-                  className="text-xs text-slate-700 hover:text-slate-900 font-semibold flex items-center gap-1 bg-white hover:bg-slate-100 px-2.5 py-1.5 rounded-md border border-slate-200 transition-colors"
-                >
-                  <Eye className="w-3.5 h-3.5 text-slate-500" />
-                  <span>Preview</span>
+                <button onClick={() => onOpenPreview(activeKneeData, 'Knee Procedures Dataset Preview', 'knee_procedures.xlsx')} className="text-xs text-slate-700 bg-white px-2.5 py-1.5 rounded-md border border-slate-200 hover:bg-slate-100 flex items-center gap-1">
+                  <Eye className="w-3.5 h-3.5 text-slate-500" /> Preview
                 </button>
               </div>
             </div>
-
-            <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg flex items-center gap-3 text-xs text-slate-700">
-              <span className="font-mono text-slate-700 bg-white px-2 py-1 rounded border border-slate-300 font-semibold">
-                Matl Availability Date
-              </span>
-              <ArrowRight className="w-4 h-4 text-slate-400 shrink-0" />
-              <span className="font-mono text-emerald-700 bg-emerald-50 px-2 py-1 rounded border border-emerald-200 font-semibold">
-                Billing Date
-              </span>
-              <span className="text-[11px] text-slate-500 ml-auto hidden sm:inline">
-                (Auto-aligned schema)
-              </span>
-            </div>
-
           </div>
 
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-              <div className="flex items-center gap-2.5">
-                <div className="w-7 h-7 rounded-md bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold text-xs">
-                  2
-                </div>
-                <div>
-                  <h3 className="font-bold text-slate-900 text-sm">Target Ship Years Selection</h3>
-                  <p className="text-xs text-slate-500">Select which procedure years to extract and append</p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-1 text-xs">
-                <button
-                  onClick={() => setPresetYears('pre-2017')}
-                  className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-emerald-700 rounded-md border border-slate-200 font-semibold"
-                >
-                  &lt; 2017
-                </button>
-                <button
-                  onClick={() => setPresetYears('all')}
-                  className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-md border border-slate-200 font-medium"
-                >
-                  All
-                </button>
-              </div>
-            </div>
-
+            <h3 className="font-bold text-slate-900 text-sm border-b border-slate-100 pb-2">2. Target Ship Years Selection</h3>
             <div className="flex flex-wrap gap-2 p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
               {availableYears.map((yr) => {
                 const isSelected = config.targetYears.includes(yr);
@@ -441,9 +302,7 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
                     key={yr}
                     onClick={() => toggleYear(yr)}
                     className={`px-3.5 py-1.5 rounded-md text-xs font-mono font-bold transition-all flex items-center gap-1.5 ${
-                      isSelected
-                        ? 'bg-emerald-600 text-white shadow-sm border border-emerald-700'
-                        : 'bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-900 border border-slate-200'
+                      isSelected ? 'bg-emerald-600 text-white shadow-sm border border-emerald-700' : 'bg-white text-slate-600 border border-slate-200'
                     }`}
                   >
                     <span>{yr}</span>
@@ -457,134 +316,57 @@ export const AccessoryMergeStep: React.FC<AccessoryMergeStepProps> = ({
         </div>
 
         <div className="lg:col-span-5 space-y-6">
-          
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
-            <h3 className="font-bold text-slate-900 text-sm flex items-center justify-between pb-2 border-b border-slate-100">
-              <span>Execute Merge &amp; Append</span>
-              <span className="text-xs text-slate-500 font-normal">Step 2 of 3</span>
-            </h3>
-
+            <h3 className="font-bold text-slate-900 text-sm border-b border-slate-100 pb-2">Execute Merge &amp; Append</h3>
             <button
-              id="run-step-2-btn"
               onClick={runMergePipeline}
               disabled={isProcessing}
-              className={`w-full py-3.5 px-4 rounded-md font-bold text-sm flex items-center justify-center gap-2 transition-all duration-150 shadow-sm ${
-                isProcessing
-                  ? 'bg-slate-400 text-white cursor-not-allowed'
-                  : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-700/20'
+              className={`w-full py-3.5 px-4 rounded-md font-bold text-sm flex items-center justify-center gap-2 transition-all shadow-sm ${
+                isProcessing ? 'bg-slate-400 text-white' : 'bg-emerald-600 hover:bg-emerald-700 text-white'
               }`}
             >
-              {isProcessing ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  <span>Aligning &amp; Appending Knee Rows...</span>
-                </>
-              ) : (
-                <>
-                  <Play className="w-4 h-4 fill-white" />
-                  <span>Run Step 2: Merge &amp; Append</span>
-                </>
-              )}
+              {isProcessing ? <span>Processing...</span> : <span>Run Step 2: Merge &amp; Append</span>}
             </button>
-
-            <p className="text-[11px] text-slate-500 text-center">
-              Aligns ShipToID, PostalCode, and normalizes date columns automatically.
-            </p>
           </div>
 
-          {stats ? (
-            <div className="bg-white border border-emerald-300 rounded-xl p-5 shadow-md space-y-4 animate-in zoom-in-95 duration-200">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-emerald-600" />
-                  <h4 className="font-bold text-slate-900 text-sm">Combined Dataset Metrics</h4>
-                </div>
-                <span className="text-xs font-mono text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
-                  {stats.executionTimeMs}ms
-                </span>
-              </div>
-
+          {stats && (
+            <div className="bg-white border border-emerald-300 rounded-xl p-5 shadow-md space-y-4">
+              <h4 className="font-bold text-slate-900 text-sm border-b border-slate-100 pb-2">Combined Dataset Metrics</h4>
               <div className="grid grid-cols-3 gap-2 text-center">
                 <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200">
-                  <p className="text-[10px] text-slate-500 uppercase font-bold">Cleaned Acc</p>
-                  <p className="text-lg font-bold text-slate-900 mt-0.5">{stats.details?.['Cleaned Accessory Rows']}</p>
+                  <p className="text-[10px] text-slate-500 font-bold">Cleaned Acc</p>
+                  <p className="text-lg font-bold text-slate-900">{stats.details?.['Cleaned Accessory Rows']}</p>
                 </div>
                 <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200">
-                  <p className="text-[10px] text-slate-500 uppercase font-bold">Extracted Knee</p>
-                  <p className="text-lg font-bold text-slate-900 mt-0.5">{stats.details?.['Extracted Knee Rows']}</p>
+                  <p className="text-[10px] text-slate-500 font-bold">Extracted Knee</p>
+                  <p className="text-lg font-bold text-slate-900">{stats.details?.['Extracted Knee Rows']}</p>
                 </div>
                 <div className="bg-emerald-50 p-2.5 rounded-lg border border-emerald-200">
-                  <p className="text-[10px] text-emerald-700 uppercase font-bold">Combined</p>
-                  <p className="text-lg font-bold text-emerald-700 mt-0.5">{stats.filteredRows}</p>
+                  <p className="text-[10px] text-emerald-700 font-bold">Combined</p>
+                  <p className="text-lg font-bold text-emerald-700">{stats.filteredRows}</p>
                 </div>
               </div>
-
-              <div className="flex items-center gap-2 pt-2">
-                <button
-                  id="preview-merged-btn"
-                  onClick={() => mergedResult && onOpenPreview(mergedResult, 'Combined Accessory & Knee Dataset', 'accessory_with_knee.xlsx')}
-                  className="flex-1 py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 border border-slate-300 transition-colors"
-                >
-                  <Eye className="w-3.5 h-3.5 text-slate-600" />
-                  <span>Inspect Table</span>
-                </button>
-                <button
-                  id="download-merged-btn"
-                  onClick={handleDownloadExcel}
-                  className="flex-1 py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Download .xlsx</span>
-                </button>
+              <div className="flex gap-2">
+                <button onClick={() => onOpenPreview(mergedResult!, 'Combined Dataset', 'output.xlsx')} className="flex-1 py-2 bg-slate-100 text-slate-800 rounded-md text-xs font-semibold border border-slate-300">Inspect</button>
+                <button onClick={handleDownloadExcel} className="flex-1 py-2 bg-emerald-600 text-white rounded-md text-xs font-semibold">Download .xlsx</button>
               </div>
             </div>
-          ) : null}
+          )}
 
           <div className="bg-[#0f172a] border border-slate-800 rounded-xl p-4 font-mono text-xs space-y-2 shadow-sm">
-            <div className="flex items-center justify-between text-slate-400 border-b border-slate-800 pb-2">
-              <span className="font-bold text-[11px] uppercase tracking-wider text-slate-300">
-                Activity Stream
-              </span>
-              <button
-                onClick={() => setLogs([])}
-                className="text-[10px] text-slate-500 hover:text-slate-300"
-              >
-                Clear Log
-              </button>
-            </div>
-
+            <div className="text-slate-400 border-b border-slate-800 pb-2 font-bold text-[11px] uppercase">Activity Stream</div>
             <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
-              {logs.length > 0 ? (
-                logs.map((log, idx) => (
-                  <div key={idx} className="flex items-start gap-2 text-[11px] leading-relaxed">
-                    <span className="text-slate-500 select-none shrink-0">[{log.timestamp}]</span>
-                    <span
-                      className={
-                        log.level === 'success'
-                          ? 'text-emerald-400 font-semibold'
-                          : log.level === 'warn'
-                          ? 'text-amber-400'
-                          : log.level === 'error'
-                          ? 'text-rose-400 font-semibold'
-                          : 'text-slate-300'
-                      }
-                    >
-                      {log.message}
-                    </span>
-                  </div>
-                ))
-              ) : (
-                <div className="text-slate-500 py-4 text-center text-xs">
-                  Ready. Click &quot;Run Step 2&quot; to merge records.
+              {logs.map((log, idx) => (
+                <div key={idx} className="flex items-start gap-2 text-[11px]">
+                  <span className="text-slate-500">[{log.timestamp}]</span>
+                  <span className={log.level === 'success' ? 'text-emerald-400' : log.level === 'error' ? 'text-rose-400' : 'text-slate-300'}>{log.message}</span>
                 </div>
-              )}
+              ))}
             </div>
           </div>
 
         </div>
-
       </div>
-
     </div>
   );
 };

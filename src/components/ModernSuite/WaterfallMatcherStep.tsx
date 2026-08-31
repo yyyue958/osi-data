@@ -9,8 +9,7 @@ import {
   Terminal, 
   ShieldCheck,
   Upload,
-  FileSpreadsheet,
-  FileText
+  FileSpreadsheet
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
@@ -22,15 +21,15 @@ interface WaterfallMatcherStepProps {
 }
 
 const WATERFALL_STEPS_CONFIG = [
-  { id: 0, label: 'Step 1: Exact Street + Exact City' },
-  { id: 1, label: 'Step 2: First 15 Chars Street + City' },
-  { id: 2, label: 'Step 3: First 12 Chars Street + City' },
-  { id: 3, label: 'Step 4: Exact Street + Exact Zip Code' },
-  { id: 4, label: 'Step 5: First 15 Chars Street + Zip Code' },
-  { id: 5, label: 'Step 6: First 12 Chars Street + Zip Code' },
-  { id: 6, label: 'Step 7: First 2 Words Street + Zip Code' },
-  { id: 7, label: 'Step 8: Exact Hospital Name + Zip Code' },
-  { id: 8, label: 'Step 9: First 2 Words Name + Zip Code (Loosest)' }
+  { id: 0, label: 'Step 1: Exact Street + Exact City', desc: 'Strict identical match on standardized street and city.' },
+  { id: 1, label: 'Step 2: First 15 Chars Street + City', desc: 'Fuzzy match on street prefix + exact city.' },
+  { id: 2, label: 'Step 3: First 12 Chars Street + City', desc: 'Looser match on street prefix + exact city.' },
+  { id: 3, label: 'Step 4: Exact Street + Exact Zip Code', desc: 'Strict identical match on standardized street and ZIP.' },
+  { id: 4, label: 'Step 5: First 15 Chars Street + Zip Code', desc: 'Fuzzy match on street prefix + exact ZIP.' },
+  { id: 5, label: 'Step 6: First 12 Chars Street + Zip Code', desc: 'Looser match on street prefix + exact ZIP.' },
+  { id: 6, label: 'Step 7: First 2 Words Street + Zip Code', desc: 'Word-based street prefix + exact ZIP.' },
+  { id: 7, label: 'Step 8: Exact Hospital Name + Zip Code', desc: 'Strict identical match on facility name + exact ZIP.' },
+  { id: 8, label: 'Step 9: First 2 Words Name + Zip Code', desc: 'Fuzzy name prefix + exact ZIP code. (Loosest)' }
 ];
 
 const STANDARD_ADDRESS_REPLACEMENTS: Record<string, string> = {
@@ -83,7 +82,6 @@ export const WaterfallMatcherStep: React.FC<WaterfallMatcherStepProps> = ({
         try {
           const buffer = new Uint8Array(e.target?.result as ArrayBuffer);
           const wb = XLSX.read(buffer, { type: 'array' });
-          // blankrows: false prevents crash on empty ghost columns
           const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { blankrows: false });
           resolve(data);
         } catch (err) {
@@ -406,13 +404,23 @@ export const WaterfallMatcherStep: React.FC<WaterfallMatcherStepProps> = ({
                 <span>2. Match Accuracy Options ({enabledSteps.length}/9 Enabled)</span>
               </h3>
               <div className="flex items-center gap-2">
-                <button onClick={() => setEnabledSteps([0, 1, 2, 3, 4, 5, 6, 7, 8])} className="text-[11px] font-semibold text-emerald-700 hover:underline">Enable All</button>
+                <button
+                  onClick={() => setEnabledSteps([0, 1, 2, 3, 4, 5, 6, 7, 8])}
+                  className="text-[11px] font-semibold text-emerald-700 hover:underline"
+                >
+                  Enable All
+                </button>
                 <span className="text-slate-300">|</span>
-                <button onClick={() => setEnabledSteps([])} className="text-[11px] font-semibold text-slate-600 hover:underline">Clear All</button>
+                <button
+                  onClick={() => setEnabledSteps([0, 3, 7])}
+                  className="text-[11px] font-semibold text-slate-600 hover:underline"
+                >
+                  Exact Only
+                </button>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-80 overflow-y-auto pr-1">
+            <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
               {WATERFALL_STEPS_CONFIG.map((step) => {
                 const isExact = [0, 3, 7].includes(step.id);
                 const isSelected = enabledSteps.includes(step.id);
@@ -420,18 +428,32 @@ export const WaterfallMatcherStep: React.FC<WaterfallMatcherStepProps> = ({
                   <div
                     key={step.id}
                     onClick={() => toggleStep(step.id)}
-                    className={`p-2.5 rounded-lg border cursor-pointer transition-all flex items-center justify-between gap-2 ${
-                      isSelected ? 'bg-emerald-50 border-emerald-300' : 'bg-slate-50 border-slate-200 opacity-60'
+                    className={`p-3 rounded-lg border cursor-pointer transition-all flex items-start justify-between gap-3 ${
+                      isSelected
+                        ? isExact
+                          ? 'bg-emerald-50/50 border-emerald-300'
+                          : 'bg-blue-50/50 border-blue-200'
+                        : 'bg-slate-50 border-slate-200 opacity-60'
                     }`}
                   >
-                    <div className="flex items-center gap-2.5 overflow-hidden">
-                      <div className={`shrink-0 w-4 h-4 rounded border flex items-center justify-center ${
-                        isSelected ? 'bg-emerald-600 border-emerald-600 text-white' : 'border-slate-400 bg-white'
+                    <div className="flex items-start gap-2.5">
+                      <div className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center ${
+                        isSelected 
+                          ? isExact ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-blue-600 border-blue-600 text-white'
+                          : 'border-slate-400 bg-white'
                       }`}>
                         {isSelected && <CheckCircle2 className="w-3.5 h-3.5" />}
                       </div>
-                      <p className="text-[11px] font-bold text-slate-900 truncate">{step.label}</p>
+                      <div>
+                        <p className="text-xs font-bold text-slate-900">{step.label}</p>
+                        <p className="text-[11px] text-slate-500 mt-0.5">{step.desc}</p>
+                      </div>
                     </div>
+                    <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded whitespace-nowrap ${
+                      isExact ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'
+                    }`}>
+                      {isExact ? 'Exact Match' : 'Loose Match'}
+                    </span>
                   </div>
                 );
               })}

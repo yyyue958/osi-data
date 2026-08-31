@@ -49,7 +49,6 @@ export const WaterfallMatcherStep: React.FC<WaterfallMatcherStepProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [logs, setLogs] = useState<string[]>(['System ready. Waiting for files to begin 9-tier cascading waterfall matcher.']);
 
-  // File States
   const [masterFile, setMasterFile] = useState<File | null>(null);
   const [procedureFile, setProcedureFile] = useState<File | null>(null);
 
@@ -82,7 +81,6 @@ export const WaterfallMatcherStep: React.FC<WaterfallMatcherStepProps> = ({
         try {
           const buffer = new Uint8Array(e.target?.result as ArrayBuffer);
           const wb = XLSX.read(buffer, { type: 'array' });
-          // blankrows: false prevents crash on empty ghost columns
           const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { blankrows: false });
           resolve(data);
         } catch (err) {
@@ -111,7 +109,7 @@ export const WaterfallMatcherStep: React.FC<WaterfallMatcherStepProps> = ({
     document.body.removeChild(link);
   };
 
-  // --- TEXT CLEANERS ---
+  // --- EXACT PYTHON TEXT CLEANERS ---
   const cleanStreetText = (str: string) => {
     if (!str) return '';
     let cleaned = String(str).toUpperCase().replace(/#/g, 'STE ');
@@ -153,7 +151,7 @@ export const WaterfallMatcherStep: React.FC<WaterfallMatcherStepProps> = ({
       
       const dfCsv = await readCSVFile(procedureFile);
 
-      // --- STEP 1: POOL IDS ---
+      // --- STEP 1: POOL EVERY SINGLE ID SO NONE ARE LOST ---
       logMsg('Pooling all unique IDs from the Master file...');
       const masterCols = Object.keys(dfMaster[0] || {});
       const idCols = masterCols.filter(c => c.toUpperCase().includes('ID') || c.toUpperCase().includes('ACCOUNT'));
@@ -178,8 +176,8 @@ export const WaterfallMatcherStep: React.FC<WaterfallMatcherStepProps> = ({
       });
 
       logMsg('-------------------------------------------------------');
-      logMsg(`VERIFICATION: Found ${allUniqueIdsGlobal.size} absolutely unique IDs in the base file.`);
-      logMsg('Because this is the base file, ALL of these will be preserved.');
+      logMsg(`VERIFICATION: Found ${allUniqueIdsGlobal.size} absolutely unique IDs in the Excel file.`);
+      logMsg('Because Excel is now the base file, ALL of these will be preserved.');
       logMsg('-------------------------------------------------------');
 
       // Identify Master Columns
@@ -189,12 +187,11 @@ export const WaterfallMatcherStep: React.FC<WaterfallMatcherStepProps> = ({
       const masterStreetCol = masterCols.find(c => ['Location Street', 'ShipTo Street', 'Street', 'Address'].includes(c));
 
       if (!masterCityCol || !masterZipCol || !masterNameCol || !masterStreetCol) {
-         throw new Error(`Missing crucial columns in Master file. Found: City(${masterCityCol}), Zip(${masterZipCol}), Name(${masterNameCol}), Street(${masterStreetCol})`);
+         throw new Error(`Could not find matching City, Zip, Name, or Street columns in the Excel file.`);
       }
 
       logMsg('Standardizing addresses, names, cities, and ZIP codes...');
 
-      // Process Master Data
       dfMaster.forEach(row => {
         const street = cleanStreetText(row[masterStreetCol]);
         const name = cleanNameText(row[masterNameCol]);
@@ -228,7 +225,7 @@ export const WaterfallMatcherStep: React.FC<WaterfallMatcherStepProps> = ({
       const dictNameZip = new Map();
       const dictFuzzyNameZip = new Map();
 
-      logMsg('Building matching dictionaries from Procedure CSV...');
+      logMsg('Building matching dictionaries from CSV...');
       
       dfCsv.forEach(row => {
         const street = cleanStreetText(row["street address"] || row["ADDRESSLINE1"] || '');
@@ -251,15 +248,16 @@ export const WaterfallMatcherStep: React.FC<WaterfallMatcherStepProps> = ({
           FuzzyNameZip: `${f2Name}|${zip}`
         };
 
-        if (keys.Exact !== '|') dictExact.set(keys.Exact, row);
-        if (keys.City15 !== '|') dict15City.set(keys.City15, row);
-        if (keys.City12 !== '|') dict12City.set(keys.City12, row);
-        if (keys.ExactZip !== '|') dictExactZip.set(keys.ExactZip, row);
-        if (keys.Zip15 !== '|') dict15Zip.set(keys.Zip15, row);
-        if (keys.Zip12 !== '|') dict12Zip.set(keys.Zip12, row);
-        if (keys.First2Zip !== '|') dictFirst2Zip.set(keys.First2Zip, row);
-        if (keys.NameZip !== '|') dictNameZip.set(keys.NameZip, row);
-        if (keys.FuzzyNameZip !== '|') dictFuzzyNameZip.set(keys.FuzzyNameZip, row);
+        // Mirror Python's drop_duplicates(keep='first')
+        if (keys.Exact !== '|' && !dictExact.has(keys.Exact)) dictExact.set(keys.Exact, row);
+        if (keys.City15 !== '|' && !dict15City.has(keys.City15)) dict15City.set(keys.City15, row);
+        if (keys.City12 !== '|' && !dict12City.has(keys.City12)) dict12City.set(keys.City12, row);
+        if (keys.ExactZip !== '|' && !dictExactZip.has(keys.ExactZip)) dictExactZip.set(keys.ExactZip, row);
+        if (keys.Zip15 !== '|' && !dict15Zip.has(keys.Zip15)) dict15Zip.set(keys.Zip15, row);
+        if (keys.Zip12 !== '|' && !dict12Zip.has(keys.Zip12)) dict12Zip.set(keys.Zip12, row);
+        if (keys.First2Zip !== '|' && !dictFirst2Zip.has(keys.First2Zip)) dictFirst2Zip.set(keys.First2Zip, row);
+        if (keys.NameZip !== '|' && !dictNameZip.has(keys.NameZip)) dictNameZip.set(keys.NameZip, row);
+        if (keys.FuzzyNameZip !== '|' && !dictFuzzyNameZip.has(keys.FuzzyNameZip)) dictFuzzyNameZip.set(keys.FuzzyNameZip, row);
       });
 
       logMsg('Executing Waterfall Match with User Settings...');
@@ -272,21 +270,20 @@ export const WaterfallMatcherStep: React.FC<WaterfallMatcherStepProps> = ({
         const keys = mRow._keys;
         let matchedProc = null;
         let matchType = "Unmatched";
-        let isExactStatus = false;
 
-        // Apply Steps Conditionally based on checkboxes
-        if (enabledSteps.includes(0) && dictExact.has(keys.Exact)) { matchedProc = dictExact.get(keys.Exact); matchType = "Step 1: Exact Street + Exact City"; isExactStatus = true; }
-        else if (enabledSteps.includes(1) && dict15City.has(keys.City15)) { matchedProc = dict15City.get(keys.City15); matchType = "Step 2: 15 Chars Street + City"; isExactStatus = false; }
-        else if (enabledSteps.includes(2) && dict12City.has(keys.City12)) { matchedProc = dict12City.get(keys.City12); matchType = "Step 3: 12 Chars Street + City"; isExactStatus = false; }
-        else if (enabledSteps.includes(3) && dictExactZip.has(keys.ExactZip)) { matchedProc = dictExactZip.get(keys.ExactZip); matchType = "Step 4: Exact Street + Zip"; isExactStatus = true; }
-        else if (enabledSteps.includes(4) && dict15Zip.has(keys.Zip15)) { matchedProc = dict15Zip.get(keys.Zip15); matchType = "Step 5: 15 Chars Street + Zip"; isExactStatus = false; }
-        else if (enabledSteps.includes(5) && dict12Zip.has(keys.Zip12)) { matchedProc = dict12Zip.get(keys.Zip12); matchType = "Step 6: 12 Chars Street + Zip"; isExactStatus = false; }
-        else if (enabledSteps.includes(6) && dictFirst2Zip.has(keys.First2Zip)) { matchedProc = dictFirst2Zip.get(keys.First2Zip); matchType = "Step 7: First 2 Words + Zip"; isExactStatus = false; }
-        else if (enabledSteps.includes(7) && dictNameZip.has(keys.NameZip)) { matchedProc = dictNameZip.get(keys.NameZip); matchType = "Step 8: Name + Zip"; isExactStatus = true; }
-        else if (enabledSteps.includes(8) && dictFuzzyNameZip.has(keys.FuzzyNameZip)) { matchedProc = dictFuzzyNameZip.get(keys.FuzzyNameZip); matchType = "Step 9: Fuzzy Name + Zip"; isExactStatus = false; }
+        // Mirror Python's Exact Waterfall Hierarchy
+        if (enabledSteps.includes(0) && dictExact.has(keys.Exact)) { matchedProc = dictExact.get(keys.Exact); matchType = "Exact Match"; }
+        else if (enabledSteps.includes(1) && dict15City.has(keys.City15)) { matchedProc = dict15City.get(keys.City15); matchType = "15 Char + City"; }
+        else if (enabledSteps.includes(2) && dict12City.has(keys.City12)) { matchedProc = dict12City.get(keys.City12); matchType = "12 Char + City"; }
+        else if (enabledSteps.includes(3) && dictExactZip.has(keys.ExactZip)) { matchedProc = dictExactZip.get(keys.ExactZip); matchType = "Exact Street + Zip"; }
+        else if (enabledSteps.includes(4) && dict15Zip.has(keys.Zip15)) { matchedProc = dict15Zip.get(keys.Zip15); matchType = "15 Char + Zip"; }
+        else if (enabledSteps.includes(5) && dict12Zip.has(keys.Zip12)) { matchedProc = dict12Zip.get(keys.Zip12); matchType = "12 Char + Zip"; }
+        else if (enabledSteps.includes(6) && dictFirst2Zip.has(keys.First2Zip)) { matchedProc = dictFirst2Zip.get(keys.First2Zip); matchType = "First 2 Words + Zip"; }
+        else if (enabledSteps.includes(7) && dictNameZip.has(keys.NameZip)) { matchedProc = dictNameZip.get(keys.NameZip); matchType = "Name + Zip"; }
+        else if (enabledSteps.includes(8) && dictFuzzyNameZip.has(keys.FuzzyNameZip)) { matchedProc = dictFuzzyNameZip.get(keys.FuzzyNameZip); matchType = "Fuzzy Name + Zip"; }
 
         if (matchType !== "Unmatched") {
-          if (isExactStatus) exactMatchCount++; else looseMatchCount++;
+          if (matchType === "Fuzzy Name + Zip") looseMatchCount++; else exactMatchCount++;
         } else {
           unmatchedCount++;
         }
@@ -294,8 +291,10 @@ export const WaterfallMatcherStep: React.FC<WaterfallMatcherStepProps> = ({
         const mergedRow = { ...mRow, ...(matchedProc || {}) };
         
         mergedRow.Procedure_Match_Status = matchType;
-        mergedRow.exact_match = (matchType !== "Unmatched" && isExactStatus) ? matchType : '';
-        mergedRow.loose_match = (matchType !== "Unmatched" && !isExactStatus) ? matchType : '';
+        
+        // Mirror Python's Exact Column Population Logic
+        mergedRow.exact_match = (matchType !== "Fuzzy Name + Zip" && matchType !== "Unmatched") ? matchType : '';
+        mergedRow.loose_match = (matchType === "Fuzzy Name + Zip") ? matchType : '';
         
         // Delete internal keys to keep output clean
         delete mergedRow._keys;
@@ -322,7 +321,7 @@ export const WaterfallMatcherStep: React.FC<WaterfallMatcherStepProps> = ({
       }
 
       logMsg('--------------------------------------------------');
-      logMsg(`Total Rows in output (Matches Base):         ${dfMaster.length}`);
+      logMsg(`Total Rows in output (Matches Excel Base): ${dfMaster.length}`);
       logMsg(`Total Unique IDs preserved:                  ${allUniqueIdsGlobal.size}`);
       logMsg(`Rows successfully matched to CSV:            ${dfMaster.length - unmatchedCount}`);
       logMsg(`Rows with NO CSV procedure match:            ${unmatchedCount}`);

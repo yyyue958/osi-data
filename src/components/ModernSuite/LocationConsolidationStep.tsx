@@ -57,7 +57,8 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
         try {
           const buffer = new Uint8Array(e.target?.result as ArrayBuffer);
           const wb = XLSX.read(buffer, { type: 'array' });
-          const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
+          // FIXED: Removed { defval: '' } to prevent "Too many properties" crash on ghost columns
+          const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { blankrows: false });
           resolve(data);
         } catch (err) {
           reject(err);
@@ -100,7 +101,6 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
         logMsg(`Reading: ${file.name}...`);
         const data = await readCSVFile(file);
         
-        // Filter columns
         const filtered = data.map((row: any) => {
           const newRow: any = {};
           keepCols.forEach(col => {
@@ -187,7 +187,11 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
     logMsg(`Loading data from ${ibFile.name}...`);
 
     try {
-      const data = await readExcelFile(ibFile);
+      // FIXED: Route CSV files to PapaParse, Excel files to SheetJS
+      const data = ibFile.name.toLowerCase().endsWith('.csv')
+        ? await readCSVFile(ibFile)
+        : await readExcelFile(ibFile);
+
       const initialRows = data.length;
       
       const keepCols = ["Location Name", "Location Street", "Location City", "Location State", "Location Zip", "Account Number"];
@@ -279,7 +283,11 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
     logMsg(`Loading data from ${accFile.name}...`);
 
     try {
-      const data = await readExcelFile(accFile);
+      // FIXED: Route CSV files to PapaParse, Excel files to SheetJS
+      const data = accFile.name.toLowerCase().endsWith('.csv')
+        ? await readCSVFile(accFile)
+        : await readExcelFile(accFile);
+
       const initialRows = data.length;
       
       const keepCols = ["ShipTo Name", "ShipTo Street", "ShipTo City", "ShipTo PostalCode", "ShipTo Region", "ShipToID"];
@@ -371,12 +379,12 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
     
     try {
       logMsg(`Loading Accessory Data...`);
-      const dataAcc = masterAccFile.name.endsWith('.csv') 
+      const dataAcc = masterAccFile.name.toLowerCase().endsWith('.csv') 
         ? await readCSVFile(masterAccFile) 
         : await readExcelFile(masterAccFile);
         
       logMsg(`Loading Installed Base Data...`);
-      const dataIb = masterIbFile.name.endsWith('.csv') 
+      const dataIb = masterIbFile.name.toLowerCase().endsWith('.csv') 
         ? await readCSVFile(masterIbFile) 
         : await readExcelFile(masterIbFile);
 

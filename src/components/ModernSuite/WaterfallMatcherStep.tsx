@@ -82,6 +82,7 @@ export const WaterfallMatcherStep: React.FC<WaterfallMatcherStepProps> = ({
         try {
           const buffer = new Uint8Array(e.target?.result as ArrayBuffer);
           const wb = XLSX.read(buffer, { type: 'array' });
+          // blankrows: false prevents crash on empty ghost columns
           const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { blankrows: false });
           resolve(data);
         } catch (err) {
@@ -177,8 +178,8 @@ export const WaterfallMatcherStep: React.FC<WaterfallMatcherStepProps> = ({
       });
 
       logMsg('-------------------------------------------------------');
-      logMsg(`VERIFICATION: Found ${allUniqueIdsGlobal.size} absolutely unique IDs in the Excel file.`);
-      logMsg('Because Excel is now the base file, ALL of these will be preserved.');
+      logMsg(`VERIFICATION: Found ${allUniqueIdsGlobal.size} absolutely unique IDs in the base file.`);
+      logMsg('Because this is the base file, ALL of these will be preserved.');
       logMsg('-------------------------------------------------------');
 
       // Identify Master Columns
@@ -271,19 +272,21 @@ export const WaterfallMatcherStep: React.FC<WaterfallMatcherStepProps> = ({
         const keys = mRow._keys;
         let matchedProc = null;
         let matchType = "Unmatched";
+        let isExactStatus = false;
 
-        if (enabledSteps.includes(0) && dictExact.has(keys.Exact)) { matchedProc = dictExact.get(keys.Exact); matchType = "Exact Match"; }
-        else if (enabledSteps.includes(1) && dict15City.has(keys.City15)) { matchedProc = dict15City.get(keys.City15); matchType = "15 Char + City"; }
-        else if (enabledSteps.includes(2) && dict12City.has(keys.City12)) { matchedProc = dict12City.get(keys.City12); matchType = "12 Char + City"; }
-        else if (enabledSteps.includes(3) && dictExactZip.has(keys.ExactZip)) { matchedProc = dictExactZip.get(keys.ExactZip); matchType = "Exact Street + Zip"; }
-        else if (enabledSteps.includes(4) && dict15Zip.has(keys.Zip15)) { matchedProc = dict15Zip.get(keys.Zip15); matchType = "15 Char + Zip"; }
-        else if (enabledSteps.includes(5) && dict12Zip.has(keys.Zip12)) { matchedProc = dict12Zip.get(keys.Zip12); matchType = "12 Char + Zip"; }
-        else if (enabledSteps.includes(6) && dictFirst2Zip.has(keys.First2Zip)) { matchedProc = dictFirst2Zip.get(keys.First2Zip); matchType = "First 2 Words + Zip"; }
-        else if (enabledSteps.includes(7) && dictNameZip.has(keys.NameZip)) { matchedProc = dictNameZip.get(keys.NameZip); matchType = "Name + Zip"; }
-        else if (enabledSteps.includes(8) && dictFuzzyNameZip.has(keys.FuzzyNameZip)) { matchedProc = dictFuzzyNameZip.get(keys.FuzzyNameZip); matchType = "Fuzzy Name + Zip"; }
+        // Apply Steps Conditionally based on checkboxes
+        if (enabledSteps.includes(0) && dictExact.has(keys.Exact)) { matchedProc = dictExact.get(keys.Exact); matchType = "Step 1: Exact Street + Exact City"; isExactStatus = true; }
+        else if (enabledSteps.includes(1) && dict15City.has(keys.City15)) { matchedProc = dict15City.get(keys.City15); matchType = "Step 2: 15 Chars Street + City"; isExactStatus = false; }
+        else if (enabledSteps.includes(2) && dict12City.has(keys.City12)) { matchedProc = dict12City.get(keys.City12); matchType = "Step 3: 12 Chars Street + City"; isExactStatus = false; }
+        else if (enabledSteps.includes(3) && dictExactZip.has(keys.ExactZip)) { matchedProc = dictExactZip.get(keys.ExactZip); matchType = "Step 4: Exact Street + Zip"; isExactStatus = true; }
+        else if (enabledSteps.includes(4) && dict15Zip.has(keys.Zip15)) { matchedProc = dict15Zip.get(keys.Zip15); matchType = "Step 5: 15 Chars Street + Zip"; isExactStatus = false; }
+        else if (enabledSteps.includes(5) && dict12Zip.has(keys.Zip12)) { matchedProc = dict12Zip.get(keys.Zip12); matchType = "Step 6: 12 Chars Street + Zip"; isExactStatus = false; }
+        else if (enabledSteps.includes(6) && dictFirst2Zip.has(keys.First2Zip)) { matchedProc = dictFirst2Zip.get(keys.First2Zip); matchType = "Step 7: First 2 Words + Zip"; isExactStatus = false; }
+        else if (enabledSteps.includes(7) && dictNameZip.has(keys.NameZip)) { matchedProc = dictNameZip.get(keys.NameZip); matchType = "Step 8: Name + Zip"; isExactStatus = true; }
+        else if (enabledSteps.includes(8) && dictFuzzyNameZip.has(keys.FuzzyNameZip)) { matchedProc = dictFuzzyNameZip.get(keys.FuzzyNameZip); matchType = "Step 9: Fuzzy Name + Zip"; isExactStatus = false; }
 
         if (matchType !== "Unmatched") {
-          if (matchType === "Fuzzy Name + Zip") looseMatchCount++; else exactMatchCount++;
+          if (isExactStatus) exactMatchCount++; else looseMatchCount++;
         } else {
           unmatchedCount++;
         }
@@ -291,8 +294,8 @@ export const WaterfallMatcherStep: React.FC<WaterfallMatcherStepProps> = ({
         const mergedRow = { ...mRow, ...(matchedProc || {}) };
         
         mergedRow.Procedure_Match_Status = matchType;
-        mergedRow.exact_match = (matchType !== "Fuzzy Name + Zip" && matchType !== "Unmatched") ? matchType : '';
-        mergedRow.loose_match = (matchType === "Fuzzy Name + Zip") ? matchType : '';
+        mergedRow.exact_match = (matchType !== "Unmatched" && isExactStatus) ? matchType : '';
+        mergedRow.loose_match = (matchType !== "Unmatched" && !isExactStatus) ? matchType : '';
         
         // Delete internal keys to keep output clean
         delete mergedRow._keys;
@@ -319,7 +322,7 @@ export const WaterfallMatcherStep: React.FC<WaterfallMatcherStepProps> = ({
       }
 
       logMsg('--------------------------------------------------');
-      logMsg(`Total Rows in output (Matches Excel Base): ${dfMaster.length}`);
+      logMsg(`Total Rows in output (Matches Base):         ${dfMaster.length}`);
       logMsg(`Total Unique IDs preserved:                  ${allUniqueIdsGlobal.size}`);
       logMsg(`Rows successfully matched to CSV:            ${dfMaster.length - unmatchedCount}`);
       logMsg(`Rows with NO CSV procedure match:            ${unmatchedCount}`);
@@ -482,6 +485,7 @@ export const WaterfallMatcherStep: React.FC<WaterfallMatcherStepProps> = ({
                 <><Play className="w-4 h-4 fill-white" /><span>Run Waterfall Match</span></>
               )}
             </button>
+            <p className="text-[11px] text-slate-500 text-center">Output will automatically trigger a CSV download upon completion.</p>
           </div>
           
           {/* Matched Summary Card */}

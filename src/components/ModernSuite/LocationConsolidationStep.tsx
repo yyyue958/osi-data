@@ -1,26 +1,20 @@
 import React, { useState } from 'react';
-import { ConsolidatedHospitalRow, ProcedureHospitalRawRow } from '../../types';
-import { 
-  SAMPLE_TAM_PROCEDURE_HOSPITALS, 
-  SAMPLE_INSTALLED_BASE_LOCATIONS, 
-  SAMPLE_ACCESSORY_LOCATIONS 
-} from '../../data/sampleData';
+import { ConsolidatedHospitalRow } from '../../types';
 import { 
   Building2, 
-  Layers, 
-  CheckCircle2, 
-  Search, 
-  Download, 
-  Eye, 
   Play, 
   FileSpreadsheet, 
-  Hash, 
   GitMerge, 
   ChevronRight, 
   Terminal, 
   Sparkles,
-  Info
+  Upload,
+  Download,
+  FileText
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
+import Papa from 'papaparse';
+import confetti from 'canvas-confetti';
 
 interface LocationConsolidationStepProps {
   onOpenPreview: (data: any[], title: string, filename: string) => void;
@@ -28,118 +22,458 @@ interface LocationConsolidationStepProps {
 }
 
 export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps> = ({
-  onOpenPreview,
   onDataUpdated
 }) => {
-  const [subTab, setSubTab] = useState<'proc' | 'ib' | 'acc' | 'master'>('master');
+  const [subTab, setSubTab] = useState<'proc' | 'ib' | 'acc' | 'master'>('proc');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [logs, setLogs] = useState<string[]>([
-    'Ready to consolidate hospital records and pool account identifiers.'
-  ]);
-  const [processedMaster, setProcessedMaster] = useState<ConsolidatedHospitalRow[] | null>(null);
+  const [logs, setLogs] = useState<string[]>(['Select a tab to begin processing data.']);
 
-  // Run Master Combiner Logic
-  const handleRunMasterCombiner = () => {
-    setIsProcessing(true);
-    setLogs([
-      '🚀 Initializing Master Hospital Location Combiner...',
-      'Loading Accessory Location datasets (4 records loaded)...',
-      'Loading Installed Base Location datasets (5 records loaded)...',
-      'Standardizing column schemas across both datasets...',
-      'Mapping ShipTo IDs & Account Numbers into canonical ID vectors...',
-      'Grouping identical hospital locations across datasets...',
-      'Pooling all unique IDs per site (e.g. Mayo Clinic: ACC-9901, ACC-9902, ST-88201, ST-88202)...',
-      'Deduplicating duplicate IDs within hospital groups...',
-      'Generating master hospital location catalog...'
-    ]);
+  // File States
+  const [phFiles, setPhFiles] = useState<File[]>([]);
+  const [ibFile, setIbFile] = useState<File | null>(null);
+  const [accFile, setAccFile] = useState<File | null>(null);
+  const [masterAccFile, setMasterAccFile] = useState<File | null>(null);
+  const [masterIbFile, setMasterIbFile] = useState<File | null>(null);
 
-    setTimeout(() => {
-      // Simulate pooling logic
-      const masterList: ConsolidatedHospitalRow[] = [
-        {
-          'Hospital + Address': 'Mayo Clinic Hospital, 200 1st St SW',
-          'Location Name': 'Mayo Clinic Hospital',
-          'Location Street': '200 1st St SW',
-          'City': 'Rochester',
-          'State': 'MN',
-          'Zip': '55905',
-          'ID': 'ACC-9901',
-          'ID 2': 'ACC-9902',
-          'ID 3': 'ST-88201',
-          'ID 4': 'ST-88202',
-          'All_IDs': ['ACC-9901', 'ACC-9902', 'ST-88201', 'ST-88202']
-        },
-        {
-          'Hospital + Address': 'Cleveland Clinic Health Center, 9500 Euclid Ave',
-          'Location Name': 'Cleveland Clinic Health Center',
-          'Location Street': '9500 Euclid Ave',
-          'City': 'Cleveland',
-          'State': 'OH',
-          'Zip': '44195',
-          'ID': 'ACC-4410',
-          'ID 2': 'ACC-4411',
-          'ID 3': 'ST-10394',
-          'All_IDs': ['ACC-4410', 'ACC-4411', 'ST-10394']
-        },
-        {
-          'Hospital + Address': 'Stanford Healthcare Pavilion, 300 Pasteur Dr',
-          'Location Name': 'Stanford Healthcare Pavilion',
-          'Location Street': '300 Pasteur Dr',
-          'City': 'Stanford',
-          'State': 'CA',
-          'Zip': '94305',
-          'ID': 'ACC-5520',
-          'ID 2': 'ST-55102',
-          'ID 3': 'ST-55103',
-          'All_IDs': ['ACC-5520', 'ST-55102', 'ST-55103']
-        },
-        {
-          'Hospital + Address': 'Johns Hopkins Hospital, 1800 Orleans St',
-          'Location Name': 'Johns Hopkins Hospital',
-          'Location Street': '1800 Orleans St',
-          'City': 'Baltimore',
-          'State': 'MD',
-          'Zip': '21287',
-          'ID': 'ACC-1801',
-          'All_IDs': ['ACC-1801']
-        },
-        {
-          'Hospital + Address': 'Cedars-Sinai Medical Center, 8700 Beverly Blvd',
-          'Location Name': 'Cedars-Sinai Medical Center',
-          'Location Street': '8700 Beverly Blvd',
-          'City': 'Los Angeles',
-          'State': 'CA',
-          'Zip': '90048',
-          'ID': 'ACC-8700',
-          'All_IDs': ['ACC-8700']
-        },
-        {
-          'Hospital + Address': 'Hospital for Special Surgery, 535 E 70th St',
-          'Location Name': 'Hospital for Special Surgery',
-          'Location Street': '535 E 70th St',
-          'City': 'New York',
-          'State': 'NY',
-          'Zip': '10021',
-          'ID': 'ST-77102',
-          'All_IDs': ['ST-77102']
+  const logMsg = (msg: string) => setLogs((prev) => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
+
+  const downloadCSV = (data: any[], filename: string) => {
+    if (!data || data.length === 0) return;
+    const csv = Papa.unparse(data);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const readExcelFile = (file: File): Promise<any[]> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const buffer = new Uint8Array(e.target?.result as ArrayBuffer);
+          const wb = XLSX.read(buffer, { type: 'array' });
+          const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
+          resolve(data);
+        } catch (err) {
+          reject(err);
         }
-      ];
+      };
+      reader.readAsArrayBuffer(file);
+    });
+  };
 
-      setProcessedMaster(masterList);
-      if (onDataUpdated) {
-        onDataUpdated(masterList);
+  const readCSVFile = (file: File): Promise<any[]> => {
+    return new Promise((resolve, reject) => {
+      Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (results) => resolve(results.data),
+        error: (err) => reject(err)
+      });
+    });
+  };
+
+  // ==========================================
+  // TAB 1: PROCEDURE HOSPITAL CONSOLIDATION
+  // ==========================================
+  const runProcedureHospital = async () => {
+    if (phFiles.length === 0) {
+      logMsg('❌ ERROR: Please upload at least one CSV file.');
+      return;
+    }
+
+    setIsProcessing(true);
+    setLogs([]);
+    logMsg(`🚀 Initializing Procedure Hospital Consolidation...`);
+    logMsg(`Loading data from ${phFiles.length} file(s)...`);
+
+    try {
+      let combinedData: any[] = [];
+      const keepCols = ["HOSPITAL_NAME", "ADDRESSLINE1", "ADDRESSLINE2", "CITY", "STATE", "ZIP_CODE", "DEFINITIVE_ID"];
+
+      for (const file of phFiles) {
+        logMsg(`Reading: ${file.name}...`);
+        const data = await readCSVFile(file);
+        
+        // Filter columns
+        const filtered = data.map((row: any) => {
+          const newRow: any = {};
+          keepCols.forEach(col => {
+            newRow[col] = row[col] || '';
+          });
+          return newRow;
+        });
+        combinedData = combinedData.concat(filtered);
       }
+
+      const initialRows = combinedData.length;
+      logMsg(`Total rows loaded across all years: ${initialRows}`);
+      logMsg('Cleaning missing text data & building address columns...');
+
+      combinedData = combinedData.map(row => {
+        const hName = String(row["HOSPITAL_NAME"]).trim();
+        const add1 = String(row["ADDRESSLINE1"]).trim();
+        const add2 = String(row["ADDRESSLINE2"]).trim();
+        
+        row["HOSPITAL_NAME"] = hName;
+        row["ADDRESSLINE1"] = add1;
+        row["ADDRESSLINE2"] = add2;
+        
+        const hospAddRaw = `${hName}, ${add1}, ${add2}`;
+        row["Hospital + Address"] = hospAddRaw.replace(/,\s*,/g, ',').replace(/^,|,$/g, '').trim();
+        
+        const streetRaw = `${add1} ${add2}`;
+        row["street address"] = streetRaw.replace(/\s+/g, ' ').trim();
+        
+        return row;
+      });
+
+      logMsg('Checking for duplicate DEFINITIVE_IDs...');
+      const seen = new Set();
+      const finalData = [];
+      let duplicateCount = 0;
+
+      for (const row of combinedData) {
+        const id = row["DEFINITIVE_ID"];
+        if (id && !seen.has(id)) {
+          seen.add(id);
+          finalData.push(row);
+        } else if (id) {
+          duplicateCount++;
+        }
+      }
+
+      if (duplicateCount > 0) {
+        logMsg(`Dropping ${duplicateCount} duplicates (keeping first occurrence)...`);
+      } else {
+        logMsg('No duplicate DEFINITIVE_IDs found.');
+      }
+
+      logMsg('Saving master dataset to CSV...');
+      downloadCSV(finalData, 'Procedure_Hospital_Addresses_Combined_Master_List.csv');
+
+      logMsg('---------------------------------------------');
+      logMsg(`Total rows combined:   ${initialRows}`);
+      logMsg(`Duplicates removed:    ${duplicateCount}`);
+      logMsg(`Final unique rows:     ${finalData.length}`);
+      logMsg('---------------------------------------------');
+      logMsg('✅ Success! Procedure Hospital master list generated.');
+      confetti({ particleCount: 45, spread: 65, origin: { y: 0.8 } });
+
+    } catch (err: any) {
+      logMsg(`❌ ERROR: ${err.message}`);
+    } finally {
       setIsProcessing(false);
-      setLogs((prev) => [
-        ...prev,
-        '--------------------------------------------------',
-        '✅ Master Hospital Location List successfully generated!',
-        'Total Unique Hospitals: 6 facilities',
-        'Total Preserved Account & ShipTo IDs: 14 unique identifiers',
-        'Cross-system duplicates consolidated into single rows.',
-        'Ready for Waterfall Procedure Matching.'
-      ]);
-    }, 600);
+    }
+  };
+
+  // ==========================================
+  // TAB 2: INSTALLED BASE CONSOLIDATION
+  // ==========================================
+  const runInstalledBase = async () => {
+    if (!ibFile) {
+      logMsg('❌ ERROR: Please upload the Installed Base Excel file.');
+      return;
+    }
+
+    setIsProcessing(true);
+    setLogs([]);
+    logMsg(`🚀 Initializing Installed Base Consolidation...`);
+    logMsg(`Loading data from ${ibFile.name}...`);
+
+    try {
+      const data = await readExcelFile(ibFile);
+      const initialRows = data.length;
+      
+      const keepCols = ["Location Name", "Location Street", "Location City", "Location State", "Location Zip", "Account Number"];
+      const firstRow = data[0] || {};
+      const missingCols = keepCols.filter(col => !(col in firstRow));
+      
+      if (missingCols.length > 0) {
+        throw new Error(`Columns missing from input file: ${missingCols.join(', ')}`);
+      }
+
+      logMsg('Cleaning text and missing values...');
+      data.forEach(row => {
+        row["Location Name"] = String(row["Location Name"] || '').trim();
+        row["Location Street"] = String(row["Location Street"] || '').trim();
+        row["Account Number"] = String(row["Account Number"] || '').trim();
+        
+        const combined = `${row["Location Name"]}, ${row["Location Street"]}`;
+        row["Hospital + Address"] = combined.replace(/,\s*,/g, ',').replace(/^,|,$/g, '').trim();
+      });
+
+      logMsg('Consolidating duplicates and preserving extra Account Numbers...');
+      
+      const grouped: Record<string, any> = {};
+      data.forEach(row => {
+        const key = `${row["Hospital + Address"]}|${row["Location Name"]}|${row["Location Street"]}|${row["Location City"]}|${row["Location State"]}|${row["Location Zip"]}`;
+        if (!grouped[key]) {
+          grouped[key] = {
+            "Hospital + Address": row["Hospital + Address"],
+            "Location Name": row["Location Name"],
+            "Location Street": row["Location Street"],
+            "Location City": row["Location City"],
+            "Location State": row["Location State"],
+            "Location Zip": row["Location Zip"],
+            accounts: new Set<string>()
+          };
+        }
+        if (row["Account Number"]) {
+          grouped[key].accounts.add(row["Account Number"]);
+        }
+      });
+
+      let maxAccounts = 0;
+      const finalData = Object.values(grouped).map(group => {
+        const row = { ...group };
+        delete row.accounts;
+        
+        const accountsArray = Array.from(group.accounts) as string[];
+        maxAccounts = Math.max(maxAccounts, accountsArray.length);
+        
+        accountsArray.forEach((acc, idx) => {
+          const colName = idx === 0 ? "Account Number" : `Account Number ${idx + 1}`;
+          row[colName] = acc;
+        });
+        
+        return row;
+      });
+
+      logMsg('Generating CSV output...');
+      downloadCSV(finalData, 'installed_base_location_combined_unique.csv');
+
+      logMsg('---------------------------------------------');
+      logMsg(`Total original rows:            ${initialRows}`);
+      logMsg(`Final unique locations:         ${finalData.length}`);
+      logMsg(`Duplicates consolidated:        ${initialRows - finalData.length}`);
+      logMsg(`Max Account Numbers for 1 site: ${maxAccounts}`);
+      logMsg('---------------------------------------------');
+      logMsg('✅ Pipeline Complete!');
+      confetti({ particleCount: 45, spread: 65, origin: { y: 0.8 } });
+
+    } catch (err: any) {
+      logMsg(`❌ ERROR: ${err.message}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // ==========================================
+  // TAB 3: ACCESSORY CONSOLIDATION
+  // ==========================================
+  const runAccessory = async () => {
+    if (!accFile) {
+      logMsg('❌ ERROR: Please upload the Accessory Excel file.');
+      return;
+    }
+
+    setIsProcessing(true);
+    setLogs([]);
+    logMsg(`🚀 Initializing Accessory Hospital Consolidation...`);
+    logMsg(`Loading data from ${accFile.name}...`);
+
+    try {
+      const data = await readExcelFile(accFile);
+      const initialRows = data.length;
+      
+      const keepCols = ["ShipTo Name", "ShipTo Street", "ShipTo City", "ShipTo PostalCode", "ShipTo Region", "ShipToID"];
+      const firstRow = data[0] || {};
+      const missingCols = keepCols.filter(col => !(col in firstRow));
+      
+      if (missingCols.length > 0) {
+        throw new Error(`Columns missing from input file: ${missingCols.join(', ')}`);
+      }
+
+      logMsg('Cleaning text and missing values...');
+      data.forEach(row => {
+        row["ShipTo Name"] = String(row["ShipTo Name"] || '').trim();
+        row["ShipTo Street"] = String(row["ShipTo Street"] || '').trim();
+        row["ShipToID"] = String(row["ShipToID"] || '').trim();
+        
+        const combined = `${row["ShipTo Name"]}, ${row["ShipTo Street"]}`;
+        row["Hospital + Address"] = combined.replace(/,\s*,/g, ',').replace(/^,|,$/g, '').trim();
+      });
+
+      logMsg('Consolidating duplicates and preserving extra ShipTo IDs...');
+      
+      const grouped: Record<string, any> = {};
+      data.forEach(row => {
+        const key = `${row["Hospital + Address"]}|${row["ShipTo Name"]}|${row["ShipTo Street"]}|${row["ShipTo City"]}|${row["ShipTo Region"]}|${row["ShipTo PostalCode"]}`;
+        if (!grouped[key]) {
+          grouped[key] = {
+            "Hospital + Address": row["Hospital + Address"],
+            "ShipTo Name": row["ShipTo Name"],
+            "ShipTo Street": row["ShipTo Street"],
+            "ShipTo City": row["ShipTo City"],
+            "ShipTo Region": row["ShipTo Region"],
+            "ShipTo PostalCode": row["ShipTo PostalCode"],
+            shipTos: new Set<string>()
+          };
+        }
+        if (row["ShipToID"]) {
+          grouped[key].shipTos.add(row["ShipToID"]);
+        }
+      });
+
+      let maxShipTos = 0;
+      const finalData = Object.values(grouped).map(group => {
+        const row = { ...group };
+        delete row.shipTos;
+        
+        const idsArray = Array.from(group.shipTos) as string[];
+        maxShipTos = Math.max(maxShipTos, idsArray.length);
+        
+        idsArray.forEach((id, idx) => {
+          const colName = idx === 0 ? "ShipToID" : `ShipToID ${idx + 1}`;
+          row[colName] = id;
+        });
+        
+        return row;
+      });
+
+      logMsg('Generating CSV output...');
+      downloadCSV(finalData, 'accessory_location_combined_unique.csv');
+
+      logMsg('---------------------------------------------');
+      logMsg(`Total original rows:            ${initialRows}`);
+      logMsg(`Final unique locations:         ${finalData.length}`);
+      logMsg(`Duplicates consolidated:        ${initialRows - finalData.length}`);
+      logMsg(`Max ShipTo IDs for 1 site:      ${maxShipTos}`);
+      logMsg('---------------------------------------------');
+      logMsg('✅ Pipeline Complete!');
+      confetti({ particleCount: 45, spread: 65, origin: { y: 0.8 } });
+
+    } catch (err: any) {
+      logMsg(`❌ ERROR: ${err.message}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // ==========================================
+  // TAB 4: MASTER COMBINER
+  // ==========================================
+  const runMasterCombiner = async () => {
+    if (!masterAccFile || !masterIbFile) {
+      logMsg('❌ ERROR: Please upload BOTH Accessory and Installed Base files.');
+      return;
+    }
+
+    setIsProcessing(true);
+    setLogs([]);
+    logMsg(`🚀 Initializing Master Hospital Combiner...`);
+    
+    try {
+      logMsg(`Loading Accessory Data...`);
+      const dataAcc = masterAccFile.name.endsWith('.csv') 
+        ? await readCSVFile(masterAccFile) 
+        : await readExcelFile(masterAccFile);
+        
+      logMsg(`Loading Installed Base Data...`);
+      const dataIb = masterIbFile.name.endsWith('.csv') 
+        ? await readCSVFile(masterIbFile) 
+        : await readExcelFile(masterIbFile);
+
+      logMsg('Normalizing column schemas across both datasets...');
+      
+      const extractIds = (row: any, keyword: string) => {
+        return Object.keys(row)
+          .filter(k => k.includes(keyword) && row[k])
+          .map(k => String(row[k]).replace('.0', '').trim());
+      };
+
+      const normalizedAcc = dataAcc.map(r => ({
+        "Location Name": r["ShipTo Name"] || r["Location Name"],
+        "Location Street": r["ShipTo Street"] || r["Location Street"],
+        "Hospital + Address": r["Hospital + Address"],
+        "City": r["ShipTo City"] || r["City"],
+        "State": r["ShipTo Region"] || r["State"],
+        "Zip": r["ShipTo PostalCode"] || r["Zip"],
+        "Extracted_IDs": extractIds(r, 'ShipToID')
+      }));
+
+      const normalizedIb = dataIb.map(r => ({
+        "Location Name": r["Location Name"],
+        "Location Street": r["Location Street"],
+        "Hospital + Address": r["Hospital + Address"],
+        "City": r["Location City"] || r["City"],
+        "State": r["Location State"] || r["State"],
+        "Zip": r["Location Zip"] || r["Zip"],
+        "Extracted_IDs": extractIds(r, 'Account Number')
+      }));
+
+      logMsg('Combining datasets...');
+      const combined = [...normalizedAcc, ...normalizedIb];
+      const initialRows = combined.length;
+
+      logMsg('Grouping identical hospital locations across datasets...');
+      const grouped: Record<string, any> = {};
+      
+      combined.forEach(row => {
+        const key = `${row["Location Name"]}|${row["Location Street"]}|${row["Hospital + Address"]}|${row["City"]}|${row["State"]}|${row["Zip"]}`;
+        if (!grouped[key]) {
+          grouped[key] = {
+            "Location Name": row["Location Name"],
+            "Location Street": row["Location Street"],
+            "Hospital + Address": row["Hospital + Address"],
+            "City": row["City"],
+            "State": row["State"],
+            "Zip": row["Zip"],
+            allIds: new Set<string>()
+          };
+        }
+        
+        row.Extracted_IDs.forEach((id: string) => {
+          if (id && id !== "nan" && id !== "None") grouped[key].allIds.add(id);
+        });
+      });
+
+      logMsg('Pooling all unique IDs per site...');
+      let maxIds = 0;
+      const finalData = Object.values(grouped).map((group: any) => {
+        const row = { ...group };
+        delete row.allIds;
+        
+        const idArray = Array.from(group.allIds) as string[];
+        maxIds = Math.max(maxIds, idArray.length);
+        
+        idArray.forEach((id, idx) => {
+          const colName = idx === 0 ? "ID" : `ID ${idx + 1}`;
+          row[colName] = id;
+        });
+        
+        return row;
+      });
+
+      logMsg('Generating master hospital location catalog...');
+      downloadCSV(finalData, 'Master_Hospital_Location_List_V2.csv');
+
+      if (onDataUpdated) {
+        onDataUpdated(finalData);
+      }
+
+      logMsg('---------------------------------------------');
+      logMsg(`Accessory rows:                 ${dataAcc.length}`);
+      logMsg(`Installed Base rows:            ${dataIb.length}`);
+      logMsg(`Total rows before dedupe:       ${initialRows}`);
+      logMsg(`Final completely unique rows:   ${finalData.length}`);
+      logMsg(`Duplicates merged into 1 row:   ${initialRows - finalData.length}`);
+      logMsg(`Max IDs for a single hospital:  ${maxIds}`);
+      logMsg('---------------------------------------------');
+      logMsg('✅ Success! Master list generated completely.');
+      confetti({ particleCount: 45, spread: 65, origin: { y: 0.8 } });
+
+    } catch (err: any) {
+      logMsg(`❌ ERROR: ${err.message}`);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   return (
@@ -156,363 +490,199 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
             Hospital Location Aggregator &amp; Multi-ID Pooler
           </h2>
           <p className="text-xs sm:text-sm text-slate-500 mt-1 max-w-3xl">
-            Consolidates TAM procedure hospitals, Installed Base records, and Accessory ship-to locations into a unified Master Hospital Catalog while preserving all associated Account Numbers and ShipTo IDs across columns.
+            Fully operational equivalent to the Python Tkinter Suite. Combines, cleans, deduplicates, and pools records natively in the browser via CSV/Excel streaming.
           </p>
         </div>
-
-        <button
-          id="btn-run-master-combiner"
-          onClick={handleRunMasterCombiner}
-          disabled={isProcessing}
-          className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-xs font-bold transition-all shadow-sm ${
-            isProcessing
-              ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
-              : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-700/20'
-          }`}
-        >
-          {isProcessing ? (
-            <>
-              <div className="w-4 h-4 border-2 border-slate-500 border-t-transparent rounded-full animate-spin"></div>
-              <span>Consolidating Locations...</span>
-            </>
-          ) : (
-            <>
-              <Play className="w-4 h-4 fill-white" />
-              <span>Run Master Combiner</span>
-            </>
-          )}
-        </button>
       </div>
 
-      {/* Sub-Tabs: 4 consolidation stages */}
+      {/* Sub-Tabs */}
       <div className="flex items-center gap-2 border-b border-slate-200 pb-2 overflow-x-auto">
-        <button
-          onClick={() => setSubTab('master')}
-          className={`px-3.5 py-1.5 rounded-md text-xs font-semibold whitespace-nowrap transition-all ${
-            subTab === 'master'
-              ? 'bg-slate-900 text-white shadow-sm'
-              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-          }`}
-        >
-          4. Master Hospital Combiner (Output)
-        </button>
-        <button
-          onClick={() => setSubTab('proc')}
-          className={`px-3.5 py-1.5 rounded-md text-xs font-semibold whitespace-nowrap transition-all ${
-            subTab === 'proc'
-              ? 'bg-slate-900 text-white shadow-sm'
-              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-          }`}
-        >
-          1. Procedure Hospital Consolidation
-        </button>
-        <button
-          onClick={() => setSubTab('ib')}
-          className={`px-3.5 py-1.5 rounded-md text-xs font-semibold whitespace-nowrap transition-all ${
-            subTab === 'ib'
-              ? 'bg-slate-900 text-white shadow-sm'
-              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-          }`}
-        >
-          2. Installed Base Consolidation
-        </button>
-        <button
-          onClick={() => setSubTab('acc')}
-          className={`px-3.5 py-1.5 rounded-md text-xs font-semibold whitespace-nowrap transition-all ${
-            subTab === 'acc'
-              ? 'bg-slate-900 text-white shadow-sm'
-              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-          }`}
-        >
-          3. Accessory Consolidation
-        </button>
+        {[
+          { id: 'proc', label: '1. Procedure Hospital Consolidation' },
+          { id: 'ib', label: '2. Installed Base Consolidation' },
+          { id: 'acc', label: '3. Accessory Consolidation' },
+          { id: 'master', label: '4. Master Combiner (Output)' }
+        ].map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => { setSubTab(tab.id as any); setLogs(['Ready.']); }}
+            className={`px-3.5 py-1.5 rounded-md text-xs font-semibold whitespace-nowrap transition-all ${
+              subTab === tab.id
+                ? 'bg-slate-900 text-white shadow-sm'
+                : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
-      {/* Main Content based on SubTab */}
-      {subTab === 'master' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      {/* Main Grid View for Current Tab */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        
+        {/* Left Side: Inputs & Action */}
+        <div className="lg:col-span-7 space-y-6">
           
-          {/* Left: Configuration & Stats (7 cols) */}
-          <div className="lg:col-span-7 space-y-6">
-            
-            {/* Input Sources Overview Card */}
-            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                  <GitMerge className="w-4 h-4 text-emerald-600" />
-                  <span>Pipeline Source Datasets</span>
-                </h3>
-                <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                  Ready to Merge
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg space-y-1">
-                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Source 1: Cleaned Accessory</p>
-                  <p className="text-xs font-semibold text-slate-900">accesary_location_combined_unique.xlsx</p>
-                  <div className="flex items-center gap-2 text-[11px] text-slate-500 pt-1">
-                    <span>4 Unique Facilities</span>
-                    <span>•</span>
-                    <span>Multi-ShipToIDs</span>
-                  </div>
-                </div>
-
-                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg space-y-1">
-                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Source 2: Installed Base</p>
-                  <p className="text-xs font-semibold text-slate-900">installed_base_location_combined.xlsx</p>
-                  <div className="flex items-center gap-2 text-[11px] text-slate-500 pt-1">
-                    <span>5 Unique Facilities</span>
-                    <span>•</span>
-                    <span>Multi-Account Numbers</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* ID Pooling Explanation */}
-              <div className="p-3.5 bg-emerald-50/60 border border-emerald-200 rounded-lg space-y-1 text-xs text-slate-700">
-                <p className="font-bold text-emerald-900 flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>Automated Multi-ID Pooling Logic</span>
-                </p>
-                <p className="text-[11px] text-slate-600 leading-relaxed">
-                  When a hospital exists in both datasets with multiple account numbers (e.g. <code>ACC-9901, ACC-9902</code>) and ShipTo IDs (e.g. <code>ST-88201, ST-88202</code>), the pipeline consolidates them horizontally into <code>ID 1, ID 2, ID 3, ID 4...</code> without losing any identifier.
-                </p>
-              </div>
+          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+                <span>Input Configuration</span>
+              </h3>
             </div>
 
-            {/* Results Card */}
-            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                  <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
-                  <span>Master Hospital Location List</span>
-                </h3>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => onOpenPreview(
-                      processedMaster || SAMPLE_INSTALLED_BASE_LOCATIONS,
-                      'Master Hospital Location List (VERSION 2)',
-                      'Master_Hospital_Location_List.xlsx'
-                    )}
-                    className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-md border border-emerald-200 transition-colors"
-                  >
-                    <Eye className="w-3.5 h-3.5" />
-                    <span>Inspect Table</span>
-                  </button>
+            {/* Render file inputs dynamically based on tab */}
+            <div className="space-y-4">
+              {subTab === 'proc' && (
+                <div className="border border-slate-200 bg-slate-50 rounded-lg p-3.5">
+                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2">Input CSV Files (Multiple allowed)</label>
+                  <div className="flex items-center gap-2">
+                    <label className="cursor-pointer text-xs font-semibold text-emerald-700 hover:text-emerald-800 flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-md border border-emerald-200 transition-colors">
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>Select Files</span>
+                      <input type="file" accept=".csv" multiple onChange={(e) => setPhFiles(Array.from(e.target.files || []))} className="hidden" />
+                    </label>
+                    <span className="text-xs font-mono text-slate-600">{phFiles.length > 0 ? `${phFiles.length} files selected` : 'None selected'}</span>
+                  </div>
                 </div>
-              </div>
+              )}
 
-              {/* Quick KPI stats */}
-              <div className="grid grid-cols-3 gap-3">
-                <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
-                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Unique Sites</p>
-                  <p className="text-lg font-black text-slate-900 mt-0.5">{processedMaster ? processedMaster.length : 6}</p>
+              {subTab === 'ib' && (
+                <div className="border border-slate-200 bg-slate-50 rounded-lg p-3.5">
+                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2">Installed Base Cleaned File (.xlsx, .csv)</label>
+                  <div className="flex items-center gap-2">
+                    <label className="cursor-pointer text-xs font-semibold text-emerald-700 hover:text-emerald-800 flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-md border border-emerald-200 transition-colors">
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>Select File</span>
+                      <input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => setIbFile(e.target.files?.[0] || null)} className="hidden" />
+                    </label>
+                    <span className="text-xs font-mono text-slate-600 truncate">{ibFile ? ibFile.name : 'None selected'}</span>
+                  </div>
                 </div>
-                <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
-                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Pooled IDs</p>
-                  <p className="text-lg font-black text-emerald-700 mt-0.5">14 IDs</p>
-                </div>
-                <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
-                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Max IDs / Site</p>
-                  <p className="text-lg font-black text-slate-900 mt-0.5">4 IDs</p>
-                </div>
-              </div>
+              )}
 
-              {/* Sample Table Preview Snippet */}
-              <div className="border border-slate-200 rounded-lg overflow-hidden">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
-                    <tr>
-                      <th className="p-2.5">Hospital Name</th>
-                      <th className="p-2.5">City, State</th>
-                      <th className="p-2.5">Zip</th>
-                      <th className="p-2.5">Pooled IDs</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {(processedMaster || [
-                      { 'Location Name': 'Mayo Clinic Hospital', City: 'Rochester', State: 'MN', Zip: '55905', All_IDs: ['ACC-9901', 'ACC-9902', 'ST-88201', 'ST-88202'] },
-                      { 'Location Name': 'Cleveland Clinic Health Center', City: 'Cleveland', State: 'OH', Zip: '44195', All_IDs: ['ACC-4410', 'ACC-4411', 'ST-10394'] },
-                      { 'Location Name': 'Stanford Healthcare Pavilion', City: 'Stanford', State: 'CA', Zip: '94305', All_IDs: ['ACC-5520', 'ST-55102', 'ST-55103'] }
-                    ]).slice(0, 3).map((row: any, idx: number) => (
-                      <tr key={idx} className="hover:bg-slate-50">
-                        <td className="p-2.5 font-semibold text-slate-900">{row['Location Name']}</td>
-                        <td className="p-2.5 text-slate-600">{row.City}, {row.State}</td>
-                        <td className="p-2.5 font-mono text-slate-600">{row.Zip}</td>
-                        <td className="p-2.5">
-                          <div className="flex flex-wrap gap-1">
-                            {row.All_IDs?.map((id: string, i: number) => (
-                              <span key={i} className="px-1.5 py-0.5 bg-slate-100 text-slate-700 border border-slate-200 rounded text-[10px] font-mono">
-                                {id}
-                              </span>
-                            ))}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              {subTab === 'acc' && (
+                <div className="border border-slate-200 bg-slate-50 rounded-lg p-3.5">
+                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2">Accessory Cleaned File (.xlsx, .csv)</label>
+                  <div className="flex items-center gap-2">
+                    <label className="cursor-pointer text-xs font-semibold text-emerald-700 hover:text-emerald-800 flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-md border border-emerald-200 transition-colors">
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>Select File</span>
+                      <input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => setAccFile(e.target.files?.[0] || null)} className="hidden" />
+                    </label>
+                    <span className="text-xs font-mono text-slate-600 truncate">{accFile ? accFile.name : 'None selected'}</span>
+                  </div>
+                </div>
+              )}
+
+              {subTab === 'master' && (
+                <>
+                  <div className="border border-slate-200 bg-slate-50 rounded-lg p-3.5">
+                    <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2">Consolidated Accessory File</label>
+                    <div className="flex items-center gap-2">
+                      <label className="cursor-pointer text-xs font-semibold text-emerald-700 hover:text-emerald-800 flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-md border border-emerald-200 transition-colors">
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>Select File</span>
+                        <input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => setMasterAccFile(e.target.files?.[0] || null)} className="hidden" />
+                      </label>
+                      <span className="text-xs font-mono text-slate-600 truncate max-w-[200px]">{masterAccFile ? masterAccFile.name : 'None'}</span>
+                    </div>
+                  </div>
+                  <div className="border border-slate-200 bg-slate-50 rounded-lg p-3.5">
+                    <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2">Consolidated Installed Base File</label>
+                    <div className="flex items-center gap-2">
+                      <label className="cursor-pointer text-xs font-semibold text-emerald-700 hover:text-emerald-800 flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-md border border-emerald-200 transition-colors">
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>Select File</span>
+                        <input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => setMasterIbFile(e.target.files?.[0] || null)} className="hidden" />
+                      </label>
+                      <span className="text-xs font-mono text-slate-600 truncate max-w-[200px]">{masterIbFile ? masterIbFile.name : 'None'}</span>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
-
           </div>
 
-          {/* Right: Real-time Terminal Logs & Schema Visualizer (5 cols) */}
-          <div className="lg:col-span-5 space-y-6">
-            
-            {/* Terminal Console */}
-            <div className="bg-[#0f172a] border border-slate-800 rounded-xl p-5 shadow-sm space-y-3">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
-                <div className="flex items-center gap-2 text-xs font-mono text-slate-400">
-                  <Terminal className="w-4 h-4 text-emerald-400" />
-                  <span>Master Combiner Console</span>
-                </div>
-                <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950 px-2 py-0.5 rounded border border-emerald-800">
-                  calamine + pandas
-                </span>
-              </div>
+          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
+            <h3 className="font-bold text-slate-900 text-sm flex items-center justify-between pb-2 border-b border-slate-100">
+              <span>Execute Pipeline</span>
+            </h3>
+            <button
+              onClick={() => {
+                if (subTab === 'proc') runProcedureHospital();
+                if (subTab === 'ib') runInstalledBase();
+                if (subTab === 'acc') runAccessory();
+                if (subTab === 'master') runMasterCombiner();
+              }}
+              disabled={isProcessing}
+              className={`w-full py-3.5 px-4 rounded-md font-bold text-sm flex items-center justify-center gap-2 transition-all duration-150 shadow-sm ${
+                isProcessing ? 'bg-slate-400 text-white cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-700/20'
+              }`}
+            >
+              {isProcessing ? (
+                <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /><span>Processing locally...</span></>
+              ) : (
+                <><Play className="w-4 h-4 fill-white" /><span>Run Current Combiner</span></>
+              )}
+            </button>
+            <p className="text-[11px] text-slate-500 text-center">Output will automatically trigger a CSV download upon completion.</p>
+          </div>
 
-              <div className="h-56 overflow-y-auto font-mono text-xs text-slate-300 space-y-1.5 p-2 bg-slate-950/70 rounded-lg">
-                {logs.map((log, i) => (
-                  <p key={i} className={log.startsWith('✅') ? 'text-emerald-400 font-bold' : log.startsWith('🚀') ? 'text-blue-400 font-bold' : 'text-slate-400'}>
-                    {log}
-                  </p>
-                ))}
-              </div>
-            </div>
-
-            {/* Schema Mapping Matrix */}
-            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-3">
-              <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                Cross-System Schema Normalization
-              </h4>
+          {subTab === 'master' && (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-5 shadow-sm">
+              <h4 className="text-xs font-bold text-emerald-900 uppercase tracking-wider mb-2">Cross-System Schema Normalization</h4>
               <div className="space-y-2 text-xs">
-                <div className="p-2.5 bg-slate-50 rounded border border-slate-200 flex items-center justify-between">
+                <div className="p-2.5 bg-white rounded border border-emerald-100 flex items-center justify-between">
                   <span className="font-mono text-slate-600">ShipTo Name / Location Name</span>
                   <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
                   <span className="font-bold font-mono text-emerald-800">Location Name</span>
                 </div>
-                <div className="p-2.5 bg-slate-50 rounded border border-slate-200 flex items-center justify-between">
+                <div className="p-2.5 bg-white rounded border border-emerald-100 flex items-center justify-between">
                   <span className="font-mono text-slate-600">ShipTo Region / Location State</span>
                   <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
                   <span className="font-bold font-mono text-emerald-800">State</span>
                 </div>
-                <div className="p-2.5 bg-slate-50 rounded border border-slate-200 flex items-center justify-between">
-                  <span className="font-mono text-slate-600">ShipTo PostalCode / Location Zip</span>
-                  <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
-                  <span className="font-bold font-mono text-emerald-800">Zip</span>
-                </div>
-                <div className="p-2.5 bg-slate-50 rounded border border-slate-200 flex items-center justify-between">
+                <div className="p-2.5 bg-white rounded border border-emerald-100 flex items-center justify-between">
                   <span className="font-mono text-slate-600">Account Number + ShipToID</span>
                   <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
                   <span className="font-bold font-mono text-emerald-800">ID 1, ID 2... ID N</span>
                 </div>
               </div>
             </div>
-
-          </div>
+          )}
 
         </div>
-      )}
 
-      {/* SubTab 1: Procedure Hospital Consolidation */}
-      {subTab === 'proc' && (
-        <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <div>
-              <h3 className="text-base font-bold text-slate-900">Procedure Hospital Multi-Year Consolidation</h3>
-              <p className="text-xs text-slate-500 mt-0.5">Combines TAM 2022, 2023, 2024 annual report files and generates clean address tokens</p>
+        {/* Right Side: Terminal Logger */}
+        <div className="lg:col-span-5 space-y-6">
+          <div className="bg-[#0f172a] border border-slate-800 rounded-xl p-5 shadow-sm space-y-3 h-full min-h-[400px] flex flex-col">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
+              <div className="flex items-center gap-2 text-xs font-mono text-slate-400">
+                <Terminal className="w-4 h-4 text-emerald-400" />
+                <span>Execution Console</span>
+              </div>
+              <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950 px-2 py-0.5 rounded border border-emerald-800">
+                browser-native
+              </span>
             </div>
-            <button
-              onClick={() => onOpenPreview(SAMPLE_TAM_PROCEDURE_HOSPITALS, 'Procedure Hospital Addresses Master List', 'Procedure_Hospital_Addresses_Combined_Master_List.csv')}
-              className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded-md border border-emerald-200"
-            >
-              <Eye className="w-3.5 h-3.5" />
-              <span>Preview 8 Records</span>
-            </button>
-          </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg">
-              <p className="text-[10px] font-bold text-slate-500 uppercase">Input Files</p>
-              <p className="text-xs font-semibold text-slate-900 mt-1">TAM 2022, 2023, 2024 Reports</p>
-              <p className="text-[11px] text-slate-500 mt-0.5">3 Multi-Year Files</p>
-            </div>
-            <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg">
-              <p className="text-[10px] font-bold text-slate-500 uppercase">Token Generation</p>
-              <p className="text-xs font-semibold text-emerald-700 mt-1">Hospital + Address &amp; street address</p>
-              <p className="text-[11px] text-slate-500 mt-0.5">Regex cleaned spacing &amp; commas</p>
-            </div>
-            <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg">
-              <p className="text-[10px] font-bold text-slate-500 uppercase">Deduplication</p>
-              <p className="text-xs font-semibold text-slate-900 mt-1">DEFINITIVE_ID Unique Key</p>
-              <p className="text-[11px] text-slate-500 mt-0.5">Cross-year duplicates dropped</p>
+            <div className="flex-1 overflow-y-auto font-mono text-[11px] leading-relaxed text-slate-300 space-y-1.5 p-2 bg-slate-950/70 rounded-lg">
+              {logs.map((log, i) => (
+                <p key={i} className={
+                  log.includes('✅') ? 'text-emerald-400 font-bold' 
+                  : log.includes('❌') ? 'text-rose-400 font-bold' 
+                  : log.includes('🚀') ? 'text-blue-400 font-bold' 
+                  : 'text-slate-400'
+                }>
+                  {log}
+                </p>
+              ))}
             </div>
           </div>
         </div>
-      )}
 
-      {/* SubTab 2: Installed Base Consolidation */}
-      {subTab === 'ib' && (
-        <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <div>
-              <h3 className="text-base font-bold text-slate-900">Installed Base Hospital Consolidation</h3>
-              <p className="text-xs text-slate-500 mt-0.5">Groups installed tables by hospital location and expands multiple Account Numbers into columns</p>
-            </div>
-            <button
-              onClick={() => onOpenPreview(SAMPLE_INSTALLED_BASE_LOCATIONS, 'Installed Base Consolidated Locations', 'installed_base_location_combined.xlsx')}
-              className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded-md border border-emerald-200"
-            >
-              <Eye className="w-3.5 h-3.5" />
-              <span>Preview 5 Records</span>
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
-              <p className="text-xs font-bold text-slate-900">Grouping Key</p>
-              <p className="text-xs text-slate-600">Location Name + Location Street + Location City + Location State + Location Zip</p>
-            </div>
-            <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
-              <p className="text-xs font-bold text-slate-900">Output Columns</p>
-              <p className="text-xs text-slate-600 font-mono">Hospital + Address, Location Name, Street, City, State, Zip, Account Number 1, Account Number 2...</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* SubTab 3: Accessory Consolidation */}
-      {subTab === 'acc' && (
-        <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <div>
-              <h3 className="text-base font-bold text-slate-900">Accessory Hospital Consolidation</h3>
-              <p className="text-xs text-slate-500 mt-0.5">Groups accessory sales by Ship-To location and expands multiple ShipToIDs into columns</p>
-            </div>
-            <button
-              onClick={() => onOpenPreview(SAMPLE_ACCESSORY_LOCATIONS, 'Accessory Consolidated Locations', 'accesary_location_combined_unique.xlsx')}
-              className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded-md border border-emerald-200"
-            >
-              <Eye className="w-3.5 h-3.5" />
-              <span>Preview 4 Records</span>
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
-              <p className="text-xs font-bold text-slate-900">Grouping Key</p>
-              <p className="text-xs text-slate-600">ShipTo Name + ShipTo Street + ShipTo City + ShipTo Region + ShipTo PostalCode</p>
-            </div>
-            <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
-              <p className="text-xs font-bold text-slate-900">Output Columns</p>
-              <p className="text-xs text-slate-600 font-mono">Hospital + Address, ShipTo Name, Street, City, Region, PostalCode, ShipToID 1, ShipToID 2...</p>
-            </div>
-          </div>
-        </div>
-      )}
-
+      </div>
     </div>
   );
 };

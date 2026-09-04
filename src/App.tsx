@@ -15,12 +15,12 @@ import { useLocalStorage } from './hooks/useLocalStorage';
 export default function App() {
   const [activeView, setActiveView] = useLocalStorage<ActiveView>('mizuho_active_view', 'modern-suite');
   
-  // App-level datasets
   const [accessoryData, setAccessoryData] = useLocalStorage<AccessoryOrderRow[]>('mizuho_accessory_data', SAMPLE_ACCESSORY_DATA);
   const [kneeData, setKneeData] = useLocalStorage<KneeProcedureRow[]>('mizuho_knee_data', SAMPLE_KNEE_PROCEDURES_DATA);
   const [installedData, setInstalledData] = useLocalStorage<InstalledBaseRow[]>('mizuho_installed_data', SAMPLE_INSTALLED_BASE_DATA);
 
-  // Smart file parser handles BOTH CSV and Excel
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const handleFileUpload = (
     e: React.ChangeEvent<HTMLInputElement>,
     datasetType: 'accessory' | 'knee' | 'installed'
@@ -31,13 +31,12 @@ export default function App() {
     const isExcel = file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls');
 
     if (isExcel) {
-      // 1. Process Excel Files
+      // 1. Process Excel Files & Auto-Convert to CSV
       const reader = new FileReader();
       reader.onload = (evt) => {
         try {
           const buffer = new Uint8Array(evt.target?.result as ArrayBuffer);
           const wb = XLSX.read(buffer, { type: 'array' });
-          // blankrows: false prevents massive memory crashes on large Excel files
           const parsedRows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { blankrows: false });
           
           if (datasetType === 'accessory') {
@@ -47,7 +46,19 @@ export default function App() {
           } else if (datasetType === 'installed') {
             setInstalledData(parsedRows as InstalledBaseRow[]);
           }
-          alert(`Successfully imported ${parsedRows.length.toLocaleString()} rows from Excel into ${datasetType} data!`);
+
+          // --- NEW: AUTO-CONVERT & DOWNLOAD AS CSV ---
+          const csvContent = Papa.unparse(parsedRows);
+          const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+          const link = document.createElement('a');
+          link.href = URL.createObjectURL(blob);
+          link.download = file.name.replace(/\.[^/.]+$/, "") + "_converted.csv";
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          // -------------------------------------------
+
+          alert(`Success! Loaded ${parsedRows.length.toLocaleString()} rows into ${datasetType} data AND downloaded a CSV copy for you!`);
         } catch (err: any) {
           alert(`Error parsing Excel file: ${err.message}`);
         }
@@ -55,7 +66,7 @@ export default function App() {
       reader.readAsArrayBuffer(file);
       
     } else {
-      // 2. Process CSV Files
+      // 2. Process CSV Files Normally
       Papa.parse(file, {
         header: true,
         skipEmptyLines: true,
@@ -77,7 +88,6 @@ export default function App() {
       });
     }
 
-    // Reset input so you can re-upload the same file if needed
     e.target.value = '';
   };
 
@@ -93,14 +103,12 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col font-sans selection:bg-emerald-600 selection:text-white">
-      {/* Navigation Header */}
       <Navbar
         activeView={activeView}
         setActiveView={setActiveView}
         onResetDemoData={handleResetDemoData}
       />
 
-      {/* CSV/Excel Import Banner */}
       <div className="bg-white border-b border-slate-200 px-4 py-3 sm:px-6 lg:px-8">
         <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-end gap-4">
           <div className="flex flex-wrap items-center gap-2">
@@ -137,7 +145,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* Main Content Area */}
       <main className="flex-1">
         {activeView === 'modern-suite' && (
           <ModernSuite
@@ -150,7 +157,6 @@ export default function App() {
         {activeView === 'legacy-comparison' && <LegacySimulator />}
       </main>
 
-      {/* Footer */}
       <footer className="bg-[#0f172a] border-t border-slate-800 py-6 text-xs text-slate-400">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-3">
           <p>Mizuho OSI Data Processing Suite</p>

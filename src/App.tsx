@@ -1,6 +1,4 @@
-import React, { useRef } from 'react';
-import Papa from 'papaparse';
-import * as XLSX from 'xlsx';
+import React from 'react';
 import { ActiveView, AccessoryOrderRow, KneeProcedureRow, InstalledBaseRow } from './types';
 import { 
   SAMPLE_ACCESSORY_DATA, 
@@ -15,81 +13,10 @@ import { useLocalStorage } from './hooks/useLocalStorage';
 export default function App() {
   const [activeView, setActiveView] = useLocalStorage<ActiveView>('mizuho_active_view', 'modern-suite');
   
+  // App-level datasets (Defaulting to the sample data)
   const [accessoryData, setAccessoryData] = useLocalStorage<AccessoryOrderRow[]>('mizuho_accessory_data', SAMPLE_ACCESSORY_DATA);
   const [kneeData, setKneeData] = useLocalStorage<KneeProcedureRow[]>('mizuho_knee_data', SAMPLE_KNEE_PROCEDURES_DATA);
   const [installedData, setInstalledData] = useLocalStorage<InstalledBaseRow[]>('mizuho_installed_data', SAMPLE_INSTALLED_BASE_DATA);
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const handleFileUpload = (
-    e: React.ChangeEvent<HTMLInputElement>,
-    datasetType: 'accessory' | 'knee' | 'installed'
-  ) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const isExcel = file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls');
-
-    if (isExcel) {
-      // 1. Process Excel Files & Auto-Convert to CSV
-      const reader = new FileReader();
-      reader.onload = (evt) => {
-        try {
-          const buffer = new Uint8Array(evt.target?.result as ArrayBuffer);
-          const wb = XLSX.read(buffer, { type: 'array' });
-          const parsedRows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { blankrows: false });
-          
-          if (datasetType === 'accessory') {
-            setAccessoryData(parsedRows as AccessoryOrderRow[]);
-          } else if (datasetType === 'knee') {
-            setKneeData(parsedRows as KneeProcedureRow[]);
-          } else if (datasetType === 'installed') {
-            setInstalledData(parsedRows as InstalledBaseRow[]);
-          }
-
-          // --- NEW: AUTO-CONVERT & DOWNLOAD AS CSV ---
-          const csvContent = Papa.unparse(parsedRows);
-          const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-          const link = document.createElement('a');
-          link.href = URL.createObjectURL(blob);
-          link.download = file.name.replace(/\.[^/.]+$/, "") + "_converted.csv";
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          // -------------------------------------------
-
-          alert(`Success! Loaded ${parsedRows.length.toLocaleString()} rows into ${datasetType} data AND downloaded a CSV copy for you!`);
-        } catch (err: any) {
-          alert(`Error parsing Excel file: ${err.message}`);
-        }
-      };
-      reader.readAsArrayBuffer(file);
-      
-    } else {
-      // 2. Process CSV Files Normally
-      Papa.parse(file, {
-        header: true,
-        skipEmptyLines: true,
-        dynamicTyping: true,
-        complete: (results) => {
-          const parsedRows = results.data as any[];
-          if (datasetType === 'accessory') {
-            setAccessoryData(parsedRows as AccessoryOrderRow[]);
-          } else if (datasetType === 'knee') {
-            setKneeData(parsedRows as KneeProcedureRow[]);
-          } else if (datasetType === 'installed') {
-            setInstalledData(parsedRows as InstalledBaseRow[]);
-          }
-          alert(`Successfully imported ${parsedRows.length.toLocaleString()} rows from CSV into ${datasetType} data!`);
-        },
-        error: (err) => {
-          alert(`Error parsing CSV file: ${err.message}`);
-        }
-      });
-    }
-
-    e.target.value = '';
-  };
 
   const handleResetDemoData = () => {
     if (window.confirm('Are you sure you want to reset all data back to the default samples?')) {
@@ -103,48 +30,14 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col font-sans selection:bg-emerald-600 selection:text-white">
+      {/* Navigation Header */}
       <Navbar
         activeView={activeView}
         setActiveView={setActiveView}
         onResetDemoData={handleResetDemoData}
       />
 
-      <div className="bg-white border-b border-slate-200 px-4 py-3 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-end gap-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <label className="cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1.5 rounded shadow transition font-medium">
-              Upload Accessory (Excel/CSV)
-              <input
-                type="file"
-                accept=".csv, .xlsx, .xls"
-                className="hidden"
-                onChange={(e) => handleFileUpload(e, 'accessory')}
-              />
-            </label>
-
-            <label className="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1.5 rounded shadow transition font-medium">
-              Upload Knee (Excel/CSV)
-              <input
-                type="file"
-                accept=".csv, .xlsx, .xls"
-                className="hidden"
-                onChange={(e) => handleFileUpload(e, 'knee')}
-              />
-            </label>
-
-            <label className="cursor-pointer bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-1.5 rounded shadow transition font-medium">
-              Upload Installed Base (Excel/CSV)
-              <input
-                type="file"
-                accept=".csv, .xlsx, .xls"
-                className="hidden"
-                onChange={(e) => handleFileUpload(e, 'installed')}
-              />
-            </label>
-          </div>
-        </div>
-      </div>
-
+      {/* Main Content Area */}
       <main className="flex-1">
         {activeView === 'modern-suite' && (
           <ModernSuite
@@ -157,6 +50,7 @@ export default function App() {
         {activeView === 'legacy-comparison' && <LegacySimulator />}
       </main>
 
+      {/* Footer */}
       <footer className="bg-[#0f172a] border-t border-slate-800 py-6 text-xs text-slate-400">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-3">
           <p>Mizuho OSI Data Processing Suite</p>

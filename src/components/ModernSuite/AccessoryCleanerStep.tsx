@@ -6,10 +6,6 @@ import {
   PipelineStats 
 } from '../../types';
 import { 
-  POPULAR_ORDER_TYPES, 
-  KNOWN_EXCLUDE_REASONS 
-} from '../../data/sampleData';
-import { 
   Upload, 
   CheckCircle2, 
   Play, 
@@ -24,6 +20,10 @@ import confetti from 'canvas-confetti';
 import * as XLSX from 'xlsx';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 
+// Define local defaults since sample data was removed
+const DEFAULT_ORDER_TYPES = ['KE', 'RE', 'ZDOM', 'ZRMA', 'ZSRV', 'ZTOR', 'ZKE', 'ZOR', 'ZRET'];
+const DEFAULT_EXCLUDE_REASONS = ['METECH', 'TRADE IN', 'SCRAP', 'DEMO', 'LOANER'];
+
 interface AccessoryCleanerStepProps {
   rawData: AccessoryOrderRow[];
   onDataProcessed: (cleanedData: AccessoryOrderRow[]) => void;
@@ -35,13 +35,12 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
   onDataProcessed,
   onOpenPreview
 }) => {
-  // FIX: Added local state to actually hold the uploaded Excel data
   const [uploadedData, setUploadedData] = useState<AccessoryOrderRow[] | null>(null);
 
   const [config, setConfig] = useLocalStorage<CleanAccessoryConfig>('mizuho_acc_clean_config', {
     inputFileName: 'accesary install.xlsx',
     outputFileName: 'accesary_final_cleaned.xlsx',
-    validOrderTypes: [...POPULAR_ORDER_TYPES],
+    validOrderTypes: [...DEFAULT_ORDER_TYPES],
     validCountry: 'US',
     excludeReasons: ['METECH', 'TRADE IN'],
     excludeActuals: [0]
@@ -53,9 +52,8 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
   const [logs, setLogs] = useState<PipelineExecutionLog[]>([]);
   const [stats, setStats] = useLocalStorage<PipelineStats | null>('mizuho_acc_clean_stats', null);
   const [cleanedResult, setCleanedResult] = useLocalStorage<AccessoryOrderRow[] | null>('mizuho_acc_clean_result', null);
-  const [activePreset, setActivePreset] = useLocalStorage<'standard' | 'strict' | 'all'>('mizuho_acc_clean_preset', 'standard');
 
-  const activeData = uploadedData || rawData; // Use uploaded data if available, else fallback
+  const activeData = uploadedData || rawData;
 
   const toggleOrderType = (type: string) => {
     setConfig(prev => ({
@@ -93,35 +91,6 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
     setNewReasonInput('');
   };
 
-  const applyPreset = (preset: 'standard' | 'strict' | 'all') => {
-    setActivePreset(preset);
-    if (preset === 'standard') {
-      setConfig(prev => ({
-        ...prev,
-        validOrderTypes: ['KE', 'RE', 'ZDOM', 'ZRMA', 'ZSRV', 'ZTOR', 'ZKE', 'ZOR', 'ZRET'],
-        excludeReasons: ['METECH', 'TRADE IN'],
-        validCountry: 'US',
-        excludeActuals: [0]
-      }));
-    } else if (preset === 'strict') {
-      setConfig(prev => ({
-        ...prev,
-        validOrderTypes: ['KE', 'RE', 'ZDOM'],
-        excludeReasons: ['METECH', 'TRADE IN', 'SCRAP', 'DEMO', 'LOANER'],
-        validCountry: 'US',
-        excludeActuals: [0]
-      }));
-    } else {
-      setConfig(prev => ({
-        ...prev,
-        validOrderTypes: [...POPULAR_ORDER_TYPES, 'ZKE', 'ZOR'],
-        excludeReasons: [],
-        validCountry: 'US',
-        excludeActuals: []
-      }));
-    }
-  };
-
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -135,7 +104,7 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
         const ws = wb.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json(ws) as AccessoryOrderRow[];
 
-        setUploadedData(data); // FIX: Actually save the uploaded data to state
+        setUploadedData(data);
         setConfig(prev => ({ ...prev, inputFileName: file.name }));
         
         setLogs(prev => [
@@ -301,30 +270,6 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
             Filters out non-US shipments, zero-dollar dummy records, and non-revenue order reasons.
           </p>
         </div>
-
-        <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-lg border border-slate-200">
-          <span className="text-xs text-slate-500 px-2 font-medium">Preset:</span>
-          <button
-            onClick={() => applyPreset('standard')}
-            className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
-              activePreset === 'standard'
-                ? 'bg-emerald-600 text-white shadow-sm'
-                : 'text-slate-700 hover:text-slate-900 hover:bg-slate-200'
-            }`}
-          >
-            Mizuho Standard
-          </button>
-          <button
-            onClick={() => applyPreset('strict')}
-            className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
-              activePreset === 'strict'
-                ? 'bg-emerald-600 text-white shadow-sm'
-                : 'text-slate-700 hover:text-slate-900 hover:bg-slate-200'
-            }`}
-          >
-            Strict Audit
-          </button>
-        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -430,7 +375,7 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
                 </label>
                 <div className="flex items-center gap-2 text-[11px]">
                   <button
-                    onClick={() => setConfig(prev => ({ ...prev, validOrderTypes: [...POPULAR_ORDER_TYPES] }))}
+                    onClick={() => setConfig(prev => ({ ...prev, validOrderTypes: [...DEFAULT_ORDER_TYPES] }))}
                     className="text-emerald-700 hover:underline font-semibold"
                   >
                     Select Default
@@ -446,7 +391,7 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
               </div>
 
               <div className="flex flex-wrap gap-1.5 p-2.5 bg-slate-50 border border-slate-200 rounded-lg min-h-[46px] items-center">
-                {POPULAR_ORDER_TYPES.map((type) => {
+                {DEFAULT_ORDER_TYPES.map((type) => {
                   const isSelected = config.validOrderTypes.includes(type);
                   return (
                     <button
@@ -498,7 +443,7 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
               </div>
 
               <div className="flex flex-wrap gap-1.5 p-2.5 bg-slate-50 border border-slate-200 rounded-lg min-h-[46px] items-center">
-                {KNOWN_EXCLUDE_REASONS.map((reason) => {
+                {DEFAULT_EXCLUDE_REASONS.map((reason) => {
                   const isExcluded = config.excludeReasons.includes(reason);
                   return (
                     <button

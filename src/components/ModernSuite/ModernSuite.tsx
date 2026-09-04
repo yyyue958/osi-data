@@ -15,7 +15,6 @@ import { InstalledStateCleanerStep } from './InstalledStateCleanerStep';
 import { LocationConsolidationStep } from './LocationConsolidationStep';
 import { WaterfallMatcherStep } from './WaterfallMatcherStep';
 import { DefinitiveIdMapperStep } from './DefinitiveIdMapperStep';
-import { BatchPipelineRunner } from './BatchPipelineRunner';
 import { DataPreviewModal } from './DataPreviewModal';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 
@@ -43,7 +42,8 @@ export const ModernSuite: React.FC<ModernSuiteProps> = ({
   kneeData,
   installedData
 }) => {
-  const [activeModule, setActiveModule] = useLocalStorage<AppSuiteModule>('mizuho_active_module', 'suite-master-batch');
+  // Changed default starting module to Data Prep since Batch is removed
+  const [activeModule, setActiveModule] = useLocalStorage<AppSuiteModule>('mizuho_active_module', 'suite-data-prep');
   const [dataPrepSubTab, setDataPrepSubTab] = useLocalStorage<DataPrepTab>('mizuho_data_prep_tab', 'accessory-clean');
 
   // Shared Datasets Across Suites
@@ -81,33 +81,9 @@ export const ModernSuite: React.FC<ModernSuiteProps> = ({
       
       {/* Navigation Bar */}
       <div className="bg-white border border-slate-200 rounded-xl p-2 shadow-sm">
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+        {/* Changed grid-cols-5 to grid-cols-4 for perfect fit */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
           
-          <button
-            id="tab-suite-master-batch"
-            onClick={() => setActiveModule('suite-master-batch')}
-            className={`p-3 rounded-lg text-left transition-all relative border ${
-              activeModule === 'suite-master-batch'
-                ? 'bg-slate-900 text-white border-slate-900 shadow-sm'
-                : 'bg-emerald-50/70 hover:bg-emerald-100/70 text-emerald-950 border-emerald-200'
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
-                activeModule === 'suite-master-batch' ? 'bg-emerald-500 text-slate-950' : 'bg-emerald-200 text-emerald-900'
-              }`}>
-                Automated
-              </span>
-              <Zap className={`w-4 h-4 ${activeModule === 'suite-master-batch' ? 'text-amber-300' : 'text-emerald-700'}`} />
-            </div>
-            <p className="font-bold text-xs sm:text-sm mt-1.5 line-clamp-1">
-              Full Pipeline
-            </p>
-            <p className={`text-[11px] hidden sm:block ${activeModule === 'suite-master-batch' ? 'text-slate-300' : 'text-emerald-700'}`}>
-              Run all steps at once
-            </p>
-          </button>
-
           <button
             id="tab-suite-data-prep"
             onClick={() => setActiveModule('suite-data-prep')}
@@ -248,15 +224,6 @@ export const ModernSuite: React.FC<ModernSuiteProps> = ({
       )}
 
       {/* ACTIVE MODULE CONTENTS */}
-      {activeModule === 'suite-master-batch' && (
-        <BatchPipelineRunner
-          rawAccessoryData={accessoryData}
-          rawKneeData={kneeData}
-          rawInstalledData={installedData}
-          onOpenPreview={handleOpenPreview}
-        />
-      )}
-
       {activeModule === 'suite-data-prep' && dataPrepSubTab === 'accessory-clean' && (
         <AccessoryCleanerStep
           rawData={accessoryData}

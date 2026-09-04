@@ -150,8 +150,24 @@ export const DefinitiveIdMapperStep: React.FC<DefinitiveIdMapperStepProps> = ({
         
         const dfMapped = dfTarget.map(row => {
           const defId = String(row["DEFINITIVE_ID"]).trim();
-          const mappedData = sourceLookup.get(defId) || {};
-          return { ...row, ...mappedData }; // Left Join
+          const mappedData = sourceLookup.get(defId);
+          
+          const mergedRow: any = { ...row };
+          
+          // FIX: Pre-initialize ALL pulled columns to empty string so the CSV downloader registers them
+          // even if the very first row in the file is Unmatched!
+          actualColsToPull.forEach(col => {
+            mergedRow[col] = '';
+          });
+
+          // Overwrite with actual mapped data if a match was found
+          if (mappedData) {
+            actualColsToPull.forEach(col => {
+              mergedRow[col] = mappedData[col] !== undefined ? mappedData[col] : '';
+            });
+          }
+          
+          return mergedRow;
         });
 
         const newFileName = targetFile.name.replace(/\.[^/.]+$/, "") + "_Mapped.csv";

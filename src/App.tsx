@@ -1,10 +1,5 @@
 import React from 'react';
 import { ActiveView, AccessoryOrderRow, KneeProcedureRow, InstalledBaseRow } from './types';
-import { 
-  SAMPLE_ACCESSORY_DATA, 
-  SAMPLE_KNEE_PROCEDURES_DATA, 
-  SAMPLE_INSTALLED_BASE_DATA 
-} from './data/sampleData';
 import { Navbar } from './components/Navbar';
 import { ModernSuite } from './components/ModernSuite/ModernSuite';
 import { LegacySimulator } from './components/LegacySimulator';
@@ -13,17 +8,18 @@ import { useLocalStorage } from './hooks/useLocalStorage';
 export default function App() {
   const [activeView, setActiveView] = useLocalStorage<ActiveView>('mizuho_active_view', 'modern-suite');
   
-  // App-level datasets (Defaulting to the sample data)
-  const [accessoryData, setAccessoryData] = useLocalStorage<AccessoryOrderRow[]>('mizuho_accessory_data', SAMPLE_ACCESSORY_DATA);
-  const [kneeData, setKneeData] = useLocalStorage<KneeProcedureRow[]>('mizuho_knee_data', SAMPLE_KNEE_PROCEDURES_DATA);
-  const [installedData, setInstalledData] = useLocalStorage<InstalledBaseRow[]>('mizuho_installed_data', SAMPLE_INSTALLED_BASE_DATA);
+  // App-level datasets now initialize as completely empty arrays instead of sample data
+  const [accessoryData, setAccessoryData] = useLocalStorage<AccessoryOrderRow[]>('mizuho_accessory_data', []);
+  const [kneeData, setKneeData] = useLocalStorage<KneeProcedureRow[]>('mizuho_knee_data', []);
+  const [installedData, setInstalledData] = useLocalStorage<InstalledBaseRow[]>('mizuho_installed_data', []);
 
+  // Repurposed into a "Clear All Data" button for the Navbar
   const handleResetDemoData = () => {
-    if (window.confirm('Are you sure you want to reset all data back to the default samples?')) {
+    if (window.confirm('Are you sure you want to wipe all saved data and start fresh?')) {
       localStorage.clear();
-      setAccessoryData([...SAMPLE_ACCESSORY_DATA]);
-      setKneeData([...SAMPLE_KNEE_PROCEDURES_DATA]);
-      setInstalledData([...SAMPLE_INSTALLED_BASE_DATA]);
+      setAccessoryData([]);
+      setKneeData([]);
+      setInstalledData([]);
       window.location.reload();
     }
   };

@@ -1,19 +1,16 @@
 import React from 'react';
-import { ActiveView, AccessoryOrderRow, KneeProcedureRow, InstalledBaseRow } from './types';
+import { AccessoryOrderRow, KneeProcedureRow, InstalledBaseRow } from './types';
 import { Navbar } from './components/Navbar';
 import { ModernSuite } from './components/ModernSuite/ModernSuite';
-import { LegacySimulator } from './components/LegacySimulator';
 import { useLocalStorage } from './hooks/useLocalStorage';
 
 export default function App() {
-  const [activeView, setActiveView] = useLocalStorage<ActiveView>('mizuho_active_view', 'modern-suite');
-  
-  // App-level datasets now initialize as completely empty arrays instead of sample data
+  // App-level datasets now initialize as completely empty arrays
   const [accessoryData, setAccessoryData] = useLocalStorage<AccessoryOrderRow[]>('mizuho_accessory_data', []);
   const [kneeData, setKneeData] = useLocalStorage<KneeProcedureRow[]>('mizuho_knee_data', []);
   const [installedData, setInstalledData] = useLocalStorage<InstalledBaseRow[]>('mizuho_installed_data', []);
 
-  // Repurposed into a "Clear All Data" button for the Navbar
+  // "Clear All Data" button for the Navbar
   const handleResetDemoData = () => {
     if (window.confirm('Are you sure you want to wipe all saved data and start fresh?')) {
       localStorage.clear();
@@ -27,23 +24,15 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col font-sans selection:bg-emerald-600 selection:text-white">
       {/* Navigation Header */}
-      <Navbar
-        activeView={activeView}
-        setActiveView={setActiveView}
-        onResetDemoData={handleResetDemoData}
-      />
+      <Navbar onResetDemoData={handleResetDemoData} />
 
-      {/* Main Content Area */}
+      {/* Main Content Area - Now permanently showing the Modern Suite */}
       <main className="flex-1">
-        {activeView === 'modern-suite' && (
-          <ModernSuite
-            accessoryData={accessoryData}
-            kneeData={kneeData}
-            installedData={installedData}
-          />
-        )}
-
-        {activeView === 'legacy-comparison' && <LegacySimulator />}
+        <ModernSuite
+          accessoryData={accessoryData}
+          kneeData={kneeData}
+          installedData={installedData}
+        />
       </main>
 
       {/* Footer */}

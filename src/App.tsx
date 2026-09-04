@@ -74,14 +74,8 @@ export default function App() {
 
       {/* CSV Import Banner */}
       <div className="bg-white border-b border-slate-200 px-4 py-3 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
-          <div className="text-xs text-slate-600">
-            <span className="font-semibold text-slate-800">Current Records: </span>
-            Accessories ({accessoryData.length.toLocaleString()}) | 
-            Knee ({kneeData.length.toLocaleString()}) | 
-            Installed Base ({installedData.length.toLocaleString()})
-          </div>
-
+        {/* Changed justify-between to justify-end to keep buttons on the right since text is gone */}
+        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-end gap-4">
           <div className="flex flex-wrap items-center gap-2">
             <label className="cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1.5 rounded shadow transition font-medium">
               Upload Accessory CSV
@@ -132,7 +126,7 @@ export default function App() {
       {/* Footer */}
       <footer className="bg-[#0f172a] border-t border-slate-800 py-6 text-xs text-slate-400">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-3">
-          <p>Mizuho Data Processing Suite</p>
+          <p>Mizuho OSI Data Processing Suite</p>
         </div>
       </footer>
     </div>

@@ -57,6 +57,8 @@ export const WaterfallMatcherStep: React.FC<WaterfallMatcherStepProps> = ({
     totalIds: number;
     matched: number;
     unmatched: number;
+    exactMatches: number;
+    looseMatches: number;
   } | null>(null);
 
   const [matchedResults, setMatchedResults] = useState<any[] | null>(null);
@@ -178,7 +180,7 @@ export const WaterfallMatcherStep: React.FC<WaterfallMatcherStepProps> = ({
       logMsg('Because Excel is now the base file, ALL of these will be preserved.');
       logMsg('-------------------------------------------------------');
 
-      // Identify Master Columns safely
+      // Identify Master Columns
       const masterCityCol = masterCols.find(c => ['City', 'Location City', 'ShipTo City', 'CITY'].includes(c));
       const masterZipCol = masterCols.find(c => ['Zip', 'Location Zip', 'ShipTo PostalCode', 'ZIP', 'PostalCode'].includes(c));
       const masterNameCol = masterCols.find(c => ['Location Name', 'ShipTo Name', 'Name', 'Hospital Name'].includes(c));
@@ -260,45 +262,56 @@ export const WaterfallMatcherStep: React.FC<WaterfallMatcherStepProps> = ({
 
       logMsg('Executing Waterfall Match with User Settings...');
 
+      let exactMatchCount = 0;
+      let looseMatchCount = 0;
       let unmatchedCount = 0;
+
+      // Extract all column names from the Procedure CSV
+      // We must initialize these columns even on unmatched rows so the CSV downloader doesn't ignore them!
+      const csvCols = Object.keys(dfCsv[0] || {});
 
       const finalDataset = dfMaster.map(mRow => {
         const keys = mRow._keys;
         let matchedProc = null;
         let matchType = "Unmatched";
+        let isExactStatus = false;
 
-        // Mirror Python's exact Match Logic and exact string assignments
-        if (enabledSteps.includes(0) && dictExact.has(keys.Exact)) { matchedProc = dictExact.get(keys.Exact); matchType = "Exact Match"; }
-        else if (enabledSteps.includes(1) && dict15City.has(keys.City15)) { matchedProc = dict15City.get(keys.City15); matchType = "15 Char + City"; }
-        else if (enabledSteps.includes(2) && dict12City.has(keys.City12)) { matchedProc = dict12City.get(keys.City12); matchType = "12 Char + City"; }
-        else if (enabledSteps.includes(3) && dictExactZip.has(keys.ExactZip)) { matchedProc = dictExactZip.get(keys.ExactZip); matchType = "Exact Street + Zip"; }
-        else if (enabledSteps.includes(4) && dict15Zip.has(keys.Zip15)) { matchedProc = dict15Zip.get(keys.Zip15); matchType = "15 Char + Zip"; }
-        else if (enabledSteps.includes(5) && dict12Zip.has(keys.Zip12)) { matchedProc = dict12Zip.get(keys.Zip12); matchType = "12 Char + Zip"; }
-        else if (enabledSteps.includes(6) && dictFirst2Zip.has(keys.First2Zip)) { matchedProc = dictFirst2Zip.get(keys.First2Zip); matchType = "First 2 Words + Zip"; }
-        else if (enabledSteps.includes(7) && dictNameZip.has(keys.NameZip)) { matchedProc = dictNameZip.get(keys.NameZip); matchType = "Name + Zip"; }
-        else if (enabledSteps.includes(8) && dictFuzzyNameZip.has(keys.FuzzyNameZip)) { matchedProc = dictFuzzyNameZip.get(keys.FuzzyNameZip); matchType = "Fuzzy Name + Zip"; }
+        // Apply Steps Conditionally
+        if (enabledSteps.includes(0) && dictExact.has(keys.Exact)) { matchedProc = dictExact.get(keys.Exact); matchType = "Step 1: Exact Street + Exact City"; isExactStatus = true; }
+        else if (enabledSteps.includes(1) && dict15City.has(keys.City15)) { matchedProc = dict15City.get(keys.City15); matchType = "Step 2: 15 Chars Street + City"; isExactStatus = false; }
+        else if (enabledSteps.includes(2) && dict12City.has(keys.City12)) { matchedProc = dict12City.get(keys.City12); matchType = "Step 3: 12 Chars Street + City"; isExactStatus = false; }
+        else if (enabledSteps.includes(3) && dictExactZip.has(keys.ExactZip)) { matchedProc = dictExactZip.get(keys.ExactZip); matchType = "Step 4: Exact Street + Zip"; isExactStatus = true; }
+        else if (enabledSteps.includes(4) && dict15Zip.has(keys.Zip15)) { matchedProc = dict15Zip.get(keys.Zip15); matchType = "Step 5: 15 Chars Street + Zip"; isExactStatus = false; }
+        else if (enabledSteps.includes(5) && dict12Zip.has(keys.Zip12)) { matchedProc = dict12Zip.get(keys.Zip12); matchType = "Step 6: 12 Chars Street + Zip"; isExactStatus = false; }
+        else if (enabledSteps.includes(6) && dictFirst2Zip.has(keys.First2Zip)) { matchedProc = dictFirst2Zip.get(keys.First2Zip); matchType = "Step 7: First 2 Words + Zip"; isExactStatus = false; }
+        else if (enabledSteps.includes(7) && dictNameZip.has(keys.NameZip)) { matchedProc = dictNameZip.get(keys.NameZip); matchType = "Step 8: Name + Zip"; isExactStatus = true; }
+        else if (enabledSteps.includes(8) && dictFuzzyNameZip.has(keys.FuzzyNameZip)) { matchedProc = dictFuzzyNameZip.get(keys.FuzzyNameZip); matchType = "Step 9: Fuzzy Name + Zip"; isExactStatus = false; }
 
-        if (matchType === "Unmatched") {
+        if (matchType !== "Unmatched") {
+          if (isExactStatus) exactMatchCount++; else looseMatchCount++;
+        } else {
           unmatchedCount++;
         }
 
-        // Mirror Pandas pd.concat(axis=1) safely (Don't overwrite master columns with CSV columns of the same name)
         const mergedRow: any = { ...mRow };
+        
+        // FIX: Force empty string for ALL procedure CSV columns so the downloader registers them
+        csvCols.forEach(k => {
+          const colName = (k in mRow) ? `CSV_${k}` : k;
+          mergedRow[colName] = '';
+        });
+
+        // Overwrite the empty strings if a match was actually found
         if (matchedProc) {
           Object.keys(matchedProc).forEach(k => {
-            if (!(k in mergedRow)) {
-              mergedRow[k] = matchedProc[k];
-            } else {
-              mergedRow[`CSV_${k}`] = matchedProc[k];
-            }
+            const colName = (k in mRow) ? `CSV_${k}` : k;
+            mergedRow[colName] = matchedProc[k];
           });
         }
         
         mergedRow.Procedure_Match_Status = matchType;
-        
-        // Exact Python logic for output columns
-        mergedRow.exact_match = (matchType !== "Fuzzy Name + Zip" && matchType !== "Unmatched") ? matchType : '';
-        mergedRow.loose_match = (matchType === "Fuzzy Name + Zip") ? matchType : '';
+        mergedRow.exact_match = (matchType !== "Unmatched" && isExactStatus) ? matchType : '';
+        mergedRow.loose_match = (matchType !== "Unmatched" && !isExactStatus) ? matchType : '';
         
         // Delete internal processing keys
         delete mergedRow._keys;
@@ -314,7 +327,9 @@ export const WaterfallMatcherStep: React.FC<WaterfallMatcherStepProps> = ({
         totalExcel: dfMaster.length,
         totalIds: allUniqueIdsGlobal.size,
         matched: dfMaster.length - unmatchedCount,
-        unmatched: unmatchedCount
+        unmatched: unmatchedCount,
+        exactMatches: exactMatchCount,
+        looseMatches: looseMatchCount
       });
 
       setMatchedResults(finalDataset);
@@ -322,12 +337,12 @@ export const WaterfallMatcherStep: React.FC<WaterfallMatcherStepProps> = ({
         onDataUpdated(finalDataset);
       }
 
-      logMsg('-------------------------------------------------------');
-      logMsg(`Total Rows in output (Matches Excel Base): ${dfMaster.length}`);
+      logMsg('--------------------------------------------------');
+      logMsg(`Total Rows in output (Matches Base):         ${dfMaster.length}`);
       logMsg(`Total Unique IDs preserved:                  ${allUniqueIdsGlobal.size}`);
       logMsg(`Rows successfully matched to CSV:            ${dfMaster.length - unmatchedCount}`);
       logMsg(`Rows with NO CSV procedure match:            ${unmatchedCount}`);
-      logMsg('-------------------------------------------------------');
+      logMsg('--------------------------------------------------');
       logMsg('✅ Final Step Complete! Output saved.');
       
       confetti({ particleCount: 65, spread: 80, origin: { y: 0.8 } });

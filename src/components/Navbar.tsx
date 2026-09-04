@@ -26,7 +26,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-bold tracking-tight text-white text-base sm:text-lg">
-                  MIZUHO
+                  MIZUHO OSI
                 </span>
               </div>
               <p className="text-[11px] text-slate-400 hidden sm:block">

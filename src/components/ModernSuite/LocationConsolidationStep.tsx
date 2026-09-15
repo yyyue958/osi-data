@@ -82,8 +82,21 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
     });
   };
 
-  // Helper for safe string parsing to match Pandas `.fillna("").astype(str)`
+  // ==========================================
+  // STRICT PANDAS DATA EMULATORS
+  // ==========================================
+
+  // Mimics: df.fillna("").astype(str)
   const getVal = (v: any) => v === undefined || v === null ? "" : String(v).trim();
+
+  // Mimics Pandas exact object hashing for groupby(dropna=False)
+  // This explicitly prevents JS from merging empty strings ("") and true missing values (NaN)
+  // which restores the 60 rows that Python kept separated.
+  const getPandasKey = (v: any) => {
+    if (v === undefined || v === null || Number.isNaN(v)) return "NaN";
+    if (typeof v === 'number') return `NUM:${v}`;
+    return `STR:${v}`; // Do not trim here! Preserves trailing spaces to match Python exactly.
+  };
 
   // ==========================================
   // TAB 1: PROCEDURE HOSPITAL CONSOLIDATION
@@ -204,7 +217,6 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
         const street = getVal(row["Location Street"]);
         const combinedAddress = `${hName}, ${street}`.replace(/,\s*,/g, ',').replace(/^,|,$/g, '').trim();
 
-        // Exact Pandas groupby tuple logic
         const key = `${combinedAddress}|${hName}|${street}|${getVal(row["Location City"])}|${getVal(row["Location State"])}|${getVal(row["Location Zip"])}`;
         
         if (!grouped[key]) {
@@ -368,7 +380,7 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
   };
 
   // ==========================================
-  // TAB 4: MASTER COMBINER (PANDAS EMULATOR)
+  // TAB 4: MASTER COMBINER
   // ==========================================
   const runMasterCombiner = async () => {
     if (!masterAccFile || !masterIbFile) {
@@ -391,86 +403,82 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
         ? await readCSVFile(masterIbFile) 
         : await readExcelFile(masterIbFile);
 
-      logMsg('Normalizing column schemas exactly like Pandas...');
-      const combined: any[] = [];
+      logMsg('Normalizing column schemas strictly tracking Pandas...');
       
-      // Process ACC - Strip column headers ONLY, exactly like Python Tab 4
-      dataAcc.forEach(row => {
-        const newRow: any = {};
-        for (let col in row) {
-          const cleanCol = col.trim();
-          let finalCol = cleanCol;
-          if (finalCol === "ShipTo Name") finalCol = "Location Name";
-          else if (finalCol === "ShipTo Street") finalCol = "Location Street";
-          else if (finalCol === "ShipTo City") finalCol = "City";
-          else if (finalCol === "ShipTo Region") finalCol = "State";
-          else if (finalCol === "ShipTo PostalCode") finalCol = "Zip";
+      const normalizeData = (data: any[], renameMap: Record<string, string>, idKeyword: string) => {
+        return data.map(r => {
+          const newRow: any = { ...r };
           
-          if (finalCol.includes("ShipToID")) {
-            finalCol = finalCol.replace("ShipToID", "ID");
-          }
-          newRow[finalCol] = row[col];
-        }
-        combined.push(newRow);
-      });
+          Object.keys(renameMap).forEach(oldK => {
+            if (oldK in newRow) {
+              newRow[renameMap[oldK]] = newRow[oldK];
+              delete newRow[oldK];
+            }
+          });
 
-      // Process IB - Strip column headers ONLY
-      dataIb.forEach(row => {
-        const newRow: any = {};
-        for (let col in row) {
-          const cleanCol = col.trim();
-          let finalCol = cleanCol;
-          if (finalCol === "Location City") finalCol = "City";
-          else if (finalCol === "Location State") finalCol = "State";
-          else if (finalCol === "Location Zip") finalCol = "Zip";
-          
-          if (finalCol.includes("Account Number")) {
-            finalCol = finalCol.replace("Account Number", "ID");
-          }
-          newRow[finalCol] = row[col];
-        }
-        combined.push(newRow);
-      });
-
-      const initialRows = combined.length;
-      logMsg('Grouping identical hospital locations across datasets...');
-      
-      const grouped: Record<string, any> = {};
-      const location_cols = ["Location Name", "Location Street", "Hospital + Address", "City", "State", "Zip"];
-      
-      combined.forEach(row => {
-        // PANDAS EMULATION: Grouping key that respects exact data types and NaN logic. NO TRIMMING!
-        const key = location_cols.map(col => {
-          const v = row[col];
-          if (v === undefined || v === null || Number.isNaN(v) || v === "") return "NaN";
-          if (typeof v === 'number') return `NUM:${v}`;
-          return `STR:${v}`; 
-        }).join('|||');
-
-        if (!grouped[key]) {
-          grouped[key] = {
-            "Location Name": row["Location Name"] === undefined ? "" : row["Location Name"],
-            "Location Street": row["Location Street"] === undefined ? "" : row["Location Street"],
-            "Hospital + Address": row["Hospital + Address"] === undefined ? "" : row["Hospital + Address"],
-            "City": row["City"] === undefined ? "" : row["City"],
-            "State": row["State"] === undefined ? "" : row["State"],
-            "Zip": row["Zip"] === undefined ? "" : row["Zip"],
-            allIds: new Set<string>() // dict.fromkeys equivalent
-          };
-        }
-        
-        // Find all columns containing "ID" and cleanly extract them
-        Object.keys(row).forEach(k => {
-          if (k.includes("ID")) {
-            const val = row[k];
-            if (val !== undefined && val !== null && !Number.isNaN(val) && val !== "") {
+          const idKeys = Object.keys(newRow).filter(k => k.includes(idKeyword));
+          newRow.Extracted_IDs = [];
+          idKeys.forEach(k => {
+            const val = newRow[k];
+            if (val !== undefined && val !== null) {
               let strVal = String(val).trim();
               if (strVal.endsWith('.0')) strVal = strVal.substring(0, strVal.length - 2);
               if (strVal !== "" && strVal.toLowerCase() !== "nan" && strVal.toLowerCase() !== "none") {
-                grouped[key].allIds.add(strVal);
+                newRow.Extracted_IDs.push(strVal);
               }
             }
-          }
+          });
+
+          return newRow;
+        });
+      };
+
+      const normalizedAcc = normalizeData(dataAcc, {
+        "ShipTo Name": "Location Name",
+        "ShipTo Street": "Location Street",
+        "ShipTo City": "City",
+        "ShipTo Region": "State",
+        "ShipTo PostalCode": "Zip"
+      }, "ShipToID");
+
+      const normalizedIb = normalizeData(dataIb, {
+        "Location City": "City",
+        "Location State": "State",
+        "Location Zip": "Zip"
+      }, "Account Number");
+
+      logMsg('Combining datasets...');
+      const combined = [...normalizedAcc, ...normalizedIb];
+      const initialRows = combined.length;
+
+      logMsg('Grouping identical hospital locations strictly via Python emulator...');
+      const grouped: Record<string, any> = {};
+      
+      combined.forEach(row => {
+        // Enforce Python's strict Type-and-NaN segregation rules
+        const key = [
+          getPandasKey(row["Location Name"]),
+          getPandasKey(row["Location Street"]),
+          getPandasKey(row["Hospital + Address"]),
+          getPandasKey(row["City"]),
+          getPandasKey(row["State"]),
+          getPandasKey(row["Zip"])
+        ].join('|||');
+
+        if (!grouped[key]) {
+          grouped[key] = {
+            "Location Name": row["Location Name"],
+            "Location Street": row["Location Street"],
+            "Hospital + Address": row["Hospital + Address"],
+            "City": row["City"],
+            "State": row["State"],
+            "Zip": row["Zip"],
+            allIds: new Set<string>()
+          };
+        }
+        
+        row.Extracted_IDs.forEach((id: string) => {
+          grouped[key].allIds.add(id);
         });
       });
 
@@ -493,6 +501,7 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
           const colName = i === 0 ? "ID" : `ID ${i + 1}`;
           row[colName] = idArray[i] || "";
         }
+        
         return row;
       });
 

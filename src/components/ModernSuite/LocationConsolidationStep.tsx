@@ -82,6 +82,9 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
     });
   };
 
+  // Helper for safe string parsing to match Pandas `.fillna("").astype(str)`
+  const getVal = (v: any) => v === undefined || v === null ? "" : String(v).trim();
+
   // ==========================================
   // TAB 1: PROCEDURE HOSPITAL CONSOLIDATION
   // ==========================================
@@ -107,7 +110,7 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
         const filtered = data.map((row: any) => {
           const newRow: any = {};
           keepCols.forEach(col => {
-            newRow[col] = row[col] || '';
+            newRow[col] = getVal(row[col]);
           });
           return newRow;
         });
@@ -119,13 +122,9 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
       logMsg('Cleaning missing text data & building address columns...');
 
       combinedData = combinedData.map(row => {
-        const hName = String(row["HOSPITAL_NAME"]).trim();
-        const add1 = String(row["ADDRESSLINE1"]).trim();
-        const add2 = String(row["ADDRESSLINE2"]).trim();
-        
-        row["HOSPITAL_NAME"] = hName;
-        row["ADDRESSLINE1"] = add1;
-        row["ADDRESSLINE2"] = add2;
+        const hName = row["HOSPITAL_NAME"];
+        const add1 = row["ADDRESSLINE1"];
+        const add2 = row["ADDRESSLINE2"];
         
         const hospAddRaw = `${hName}, ${add1}, ${add2}`;
         row["Hospital + Address"] = hospAddRaw.replace(/,\s*,/g, ',').replace(/^,|,$/g, '').trim();
@@ -142,20 +141,13 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
       let duplicateCount = 0;
 
       for (const row of combinedData) {
-        // Pandas treats empty strings as a tracked value when dropping duplicates
-        const id = String(row["DEFINITIVE_ID"] || '').trim();
+        const id = row["DEFINITIVE_ID"];
         if (!seen.has(id)) {
           seen.add(id);
           finalData.push(row);
         } else {
           duplicateCount++;
         }
-      }
-
-      if (duplicateCount > 0) {
-        logMsg(`Dropping ${duplicateCount} duplicates (keeping first occurrence)...`);
-      } else {
-        logMsg('No duplicate DEFINITIVE_IDs found.');
       }
 
       logMsg('Saving master dataset to CSV...');
@@ -196,7 +188,6 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
         : await readExcelFile(ibFile);
 
       const initialRows = data.length;
-      
       const keepCols = ["Location Name", "Location Street", "Location City", "Location State", "Location Zip", "Account Number"];
       const firstRow = data[0] || {};
       const missingCols = keepCols.filter(col => !(col in firstRow));
@@ -205,41 +196,43 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
         throw new Error(`Columns missing from input file:\n${missingCols.join(', ')}`);
       }
 
-      logMsg('Cleaning text and missing values...');
-      data.forEach(row => {
-        row["Location Name"] = String(row["Location Name"] || '').trim();
-        row["Location Street"] = String(row["Location Street"] || '').trim();
-        row["Account Number"] = String(row["Account Number"] || '').trim();
-        
-        const combined = `${row["Location Name"]}, ${row["Location Street"]}`;
-        row["Hospital + Address"] = combined.replace(/,\s*,/g, ',').replace(/^,|,$/g, '').trim();
-      });
-
       logMsg('Consolidating duplicates and preserving extra Account Numbers...');
       
       const grouped: Record<string, any> = {};
       data.forEach(row => {
-        const key = `${row["Hospital + Address"]}|${row["Location Name"]}|${row["Location Street"]}|${row["Location City"]}|${row["Location State"]}|${row["Location Zip"]}`;
+        const hName = getVal(row["Location Name"]);
+        const street = getVal(row["Location Street"]);
+        const combinedAddress = `${hName}, ${street}`.replace(/,\s*,/g, ',').replace(/^,|,$/g, '').trim();
+
+        const key = `${combinedAddress}|${hName}|${street}|${getVal(row["Location City"])}|${getVal(row["Location State"])}|${getVal(row["Location Zip"])}`;
+        
         if (!grouped[key]) {
           grouped[key] = {
-            "Hospital + Address": row["Hospital + Address"],
-            "Location Name": row["Location Name"],
-            "Location Street": row["Location Street"],
-            "Location City": row["Location City"],
-            "Location State": row["Location State"],
-            "Location Zip": row["Location Zip"],
+            "Hospital + Address": combinedAddress,
+            "Location Name": hName,
+            "Location Street": street,
+            "Location City": getVal(row["Location City"]),
+            "Location State": getVal(row["Location State"]),
+            "Location Zip": getVal(row["Location Zip"]),
             accounts: new Set<string>()
           };
         }
-        if (row["Account Number"]) {
-          grouped[key].accounts.add(row["Account Number"]);
+
+        const acc = getVal(row["Account Number"]);
+        if (acc && acc.toLowerCase() !== "nan" && acc.toLowerCase() !== "none") {
+          grouped[key].accounts.add(acc);
         }
       });
 
+      // PANDAS EMULATION PASS 1: Calculate global maximum accounts across entire dataframe
       let maxAccounts = 0;
+      Object.values(grouped).forEach(group => {
+        maxAccounts = Math.max(maxAccounts, group.accounts.size);
+      });
+
+      // PANDAS EMULATION PASS 2: Explicitly build every column for every row to guarantee SheetJS headers
       const finalData = Object.values(grouped).map(group => {
         const row: any = {};
-        // Explicitly set column order to match Pandas exactly
         row["Hospital + Address"] = group["Hospital + Address"];
         row["Location Name"] = group["Location Name"];
         row["Location Street"] = group["Location Street"];
@@ -248,12 +241,11 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
         row["Location Zip"] = group["Location Zip"];
         
         const accountsArray = Array.from(group.accounts) as string[];
-        maxAccounts = Math.max(maxAccounts, accountsArray.length);
         
-        accountsArray.forEach((acc, idx) => {
-          const colName = idx === 0 ? "Account Number" : `Account Number ${idx + 1}`;
-          row[colName] = acc;
-        });
+        for (let i = 0; i < Math.max(1, maxAccounts); i++) {
+          const colName = i === 0 ? "Account Number" : `Account Number ${i + 1}`;
+          row[colName] = accountsArray[i] || "";
+        }
         
         return row;
       });
@@ -297,7 +289,6 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
         : await readExcelFile(accFile);
 
       const initialRows = data.length;
-      
       const keepCols = ["ShipTo Name", "ShipTo Street", "ShipTo City", "ShipTo PostalCode", "ShipTo Region", "ShipToID"];
       const firstRow = data[0] || {};
       const missingCols = keepCols.filter(col => !(col in firstRow));
@@ -306,41 +297,43 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
         throw new Error(`Columns missing from input file:\n${missingCols.join(', ')}`);
       }
 
-      logMsg('Cleaning text and missing values...');
-      data.forEach(row => {
-        row["ShipTo Name"] = String(row["ShipTo Name"] || '').trim();
-        row["ShipTo Street"] = String(row["ShipTo Street"] || '').trim();
-        row["ShipToID"] = String(row["ShipToID"] || '').trim();
-        
-        const combined = `${row["ShipTo Name"]}, ${row["ShipTo Street"]}`;
-        row["Hospital + Address"] = combined.replace(/,\s*,/g, ',').replace(/^,|,$/g, '').trim();
-      });
-
       logMsg('Consolidating duplicates and preserving extra ShipTo IDs...');
       
       const grouped: Record<string, any> = {};
       data.forEach(row => {
-        const key = `${row["Hospital + Address"]}|${row["ShipTo Name"]}|${row["ShipTo Street"]}|${row["ShipTo City"]}|${row["ShipTo Region"]}|${row["ShipTo PostalCode"]}`;
+        const sName = getVal(row["ShipTo Name"]);
+        const street = getVal(row["ShipTo Street"]);
+        const combinedAddress = `${sName}, ${street}`.replace(/,\s*,/g, ',').replace(/^,|,$/g, '').trim();
+
+        const key = `${combinedAddress}|${sName}|${street}|${getVal(row["ShipTo City"])}|${getVal(row["ShipTo Region"])}|${getVal(row["ShipTo PostalCode"])}`;
+        
         if (!grouped[key]) {
           grouped[key] = {
-            "Hospital + Address": row["Hospital + Address"],
-            "ShipTo Name": row["ShipTo Name"],
-            "ShipTo Street": row["ShipTo Street"],
-            "ShipTo City": row["ShipTo City"],
-            "ShipTo Region": row["ShipTo Region"],
-            "ShipTo PostalCode": row["ShipTo PostalCode"],
+            "Hospital + Address": combinedAddress,
+            "ShipTo Name": sName,
+            "ShipTo Street": street,
+            "ShipTo City": getVal(row["ShipTo City"]),
+            "ShipTo Region": getVal(row["ShipTo Region"]),
+            "ShipTo PostalCode": getVal(row["ShipTo PostalCode"]),
             shipTos: new Set<string>()
           };
         }
-        if (row["ShipToID"]) {
-          grouped[key].shipTos.add(row["ShipToID"]);
+
+        const sid = getVal(row["ShipToID"]);
+        if (sid && sid.toLowerCase() !== "nan" && sid.toLowerCase() !== "none") {
+          grouped[key].shipTos.add(sid);
         }
       });
 
+      // PANDAS EMULATION PASS 1: Calculate global maximum
       let maxShipTos = 0;
+      Object.values(grouped).forEach(group => {
+        maxShipTos = Math.max(maxShipTos, group.shipTos.size);
+      });
+
+      // PANDAS EMULATION PASS 2: Explicitly build every column
       const finalData = Object.values(grouped).map(group => {
         const row: any = {};
-        // Explicitly set column order to match Pandas exactly
         row["Hospital + Address"] = group["Hospital + Address"];
         row["ShipTo Name"] = group["ShipTo Name"];
         row["ShipTo Street"] = group["ShipTo Street"];
@@ -349,12 +342,11 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
         row["ShipTo PostalCode"] = group["ShipTo PostalCode"];
         
         const idsArray = Array.from(group.shipTos) as string[];
-        maxShipTos = Math.max(maxShipTos, idsArray.length);
         
-        idsArray.forEach((id, idx) => {
-          const colName = idx === 0 ? "ShipToID" : `ShipToID ${idx + 1}`;
-          row[colName] = id;
-        });
+        for (let i = 0; i < Math.max(1, maxShipTos); i++) {
+          const colName = i === 0 ? "ShipToID" : `ShipToID ${i + 1}`;
+          row[colName] = idsArray[i] || "";
+        }
         
         return row;
       });
@@ -409,31 +401,29 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
           .filter(k => k.includes(keyword) && row[k] !== undefined && row[k] !== null)
           .map(k => {
             let val = String(row[k]).trim();
-            if (val.endsWith('.0')) {
-               val = val.substring(0, val.length - 2);
-            }
+            if (val.endsWith('.0')) val = val.substring(0, val.length - 2);
             return val;
           })
           .filter(val => val !== "" && val.toLowerCase() !== "nan" && val.toLowerCase() !== "none");
       };
 
       const normalizedAcc = dataAcc.map(r => ({
-        "Location Name": r["ShipTo Name"] || r["Location Name"],
-        "Location Street": r["ShipTo Street"] || r["Location Street"],
-        "Hospital + Address": r["Hospital + Address"],
-        "City": r["ShipTo City"] || r["City"],
-        "State": r["ShipTo Region"] || r["State"],
-        "Zip": r["ShipTo PostalCode"] || r["Zip"],
+        "Location Name": getVal(r["ShipTo Name"] || r["Location Name"]),
+        "Location Street": getVal(r["ShipTo Street"] || r["Location Street"]),
+        "Hospital + Address": getVal(r["Hospital + Address"]),
+        "City": getVal(r["ShipTo City"] || r["City"]),
+        "State": getVal(r["ShipTo Region"] || r["State"]),
+        "Zip": getVal(r["ShipTo PostalCode"] || r["Zip"]),
         "Extracted_IDs": extractIds(r, 'ShipToID')
       }));
 
       const normalizedIb = dataIb.map(r => ({
-        "Location Name": r["Location Name"],
-        "Location Street": r["Location Street"],
-        "Hospital + Address": r["Hospital + Address"],
-        "City": r["Location City"] || r["City"],
-        "State": r["Location State"] || r["State"],
-        "Zip": r["Location Zip"] || r["Zip"],
+        "Location Name": getVal(r["Location Name"]),
+        "Location Street": getVal(r["Location Street"]),
+        "Hospital + Address": getVal(r["Hospital + Address"]),
+        "City": getVal(r["Location City"] || r["City"]),
+        "State": getVal(r["Location State"] || r["State"]),
+        "Zip": getVal(r["Location Zip"] || r["Zip"]),
         "Extracted_IDs": extractIds(r, 'Account Number')
       }));
 
@@ -463,11 +453,15 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
         });
       });
 
-      logMsg('Pooling all unique IDs per site...');
+      // PANDAS EMULATION PASS 1: Calculate global maximum
       let maxIds = 0;
+      Object.values(grouped).forEach((g: any) => {
+        maxIds = Math.max(maxIds, g.allIds.size);
+      });
+
+      // PANDAS EMULATION PASS 2: Explicitly build every column
       const finalData = Object.values(grouped).map((group: any) => {
         const row: any = {};
-        // Explicitly set column order to match Pandas exactly
         row["Location Name"] = group["Location Name"];
         row["Location Street"] = group["Location Street"];
         row["Hospital + Address"] = group["Hospital + Address"];
@@ -476,12 +470,11 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
         row["Zip"] = group["Zip"];
         
         const idArray = Array.from(group.allIds) as string[];
-        maxIds = Math.max(maxIds, idArray.length);
         
-        idArray.forEach((id, idx) => {
-          const colName = idx === 0 ? "ID" : `ID ${idx + 1}`;
-          row[colName] = id;
-        });
+        for (let i = 0; i < Math.max(1, maxIds); i++) {
+          const colName = i === 0 ? "ID" : `ID ${i + 1}`;
+          row[colName] = idArray[i] || "";
+        }
         
         return row;
       });

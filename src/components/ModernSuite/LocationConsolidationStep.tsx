@@ -4,13 +4,9 @@ import {
   Building2, 
   Play, 
   FileSpreadsheet, 
-  GitMerge, 
   ChevronRight, 
   Terminal, 
-  Sparkles,
-  Upload,
-  Download,
-  FileText
+  Upload
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
@@ -50,6 +46,14 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
     document.body.removeChild(link);
   };
 
+  const exportExcel = (data: any[], filename: string, sheetName: string = 'Sheet1') => {
+    if (!data || data.length === 0) return;
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    XLSX.writeFile(wb, filename);
+  };
+
   const readExcelFile = (file: File): Promise<any[]> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -57,7 +61,6 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
         try {
           const buffer = new Uint8Array(e.target?.result as ArrayBuffer);
           const wb = XLSX.read(buffer, { type: 'array' });
-          // FIXED: Removed { defval: '' } to prevent "Too many properties" crash on ghost columns
           const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { blankrows: false });
           resolve(data);
         } catch (err) {
@@ -139,11 +142,12 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
       let duplicateCount = 0;
 
       for (const row of combinedData) {
-        const id = row["DEFINITIVE_ID"];
-        if (id && !seen.has(id)) {
+        // Pandas treats empty strings as a tracked value when dropping duplicates
+        const id = String(row["DEFINITIVE_ID"] || '').trim();
+        if (!seen.has(id)) {
           seen.add(id);
           finalData.push(row);
-        } else if (id) {
+        } else {
           duplicateCount++;
         }
       }
@@ -177,7 +181,7 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
   // ==========================================
   const runInstalledBase = async () => {
     if (!ibFile) {
-      logMsg('❌ ERROR: Please upload the Installed Base Excel file.');
+      logMsg('❌ ERROR: Please upload the Installed Base file.');
       return;
     }
 
@@ -187,7 +191,6 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
     logMsg(`Loading data from ${ibFile.name}...`);
 
     try {
-      // FIXED: Route CSV files to PapaParse, Excel files to SheetJS
       const data = ibFile.name.toLowerCase().endsWith('.csv')
         ? await readCSVFile(ibFile)
         : await readExcelFile(ibFile);
@@ -199,7 +202,7 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
       const missingCols = keepCols.filter(col => !(col in firstRow));
       
       if (missingCols.length > 0) {
-        throw new Error(`Columns missing from input file: ${missingCols.join(', ')}`);
+        throw new Error(`Columns missing from input file:\n${missingCols.join(', ')}`);
       }
 
       logMsg('Cleaning text and missing values...');
@@ -235,8 +238,14 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
 
       let maxAccounts = 0;
       const finalData = Object.values(grouped).map(group => {
-        const row = { ...group };
-        delete row.accounts;
+        const row: any = {};
+        // Explicitly set column order to match Pandas exactly
+        row["Hospital + Address"] = group["Hospital + Address"];
+        row["Location Name"] = group["Location Name"];
+        row["Location Street"] = group["Location Street"];
+        row["Location City"] = group["Location City"];
+        row["Location State"] = group["Location State"];
+        row["Location Zip"] = group["Location Zip"];
         
         const accountsArray = Array.from(group.accounts) as string[];
         maxAccounts = Math.max(maxAccounts, accountsArray.length);
@@ -249,8 +258,8 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
         return row;
       });
 
-      logMsg('Generating CSV output...');
-      downloadCSV(finalData, 'installed_base_location_combined_unique.csv');
+      logMsg('Generating Excel output...');
+      exportExcel(finalData, 'installed_base_location_combined_unique version 2.xlsx', 'Location_Summary');
 
       logMsg('---------------------------------------------');
       logMsg(`Total original rows:            ${initialRows}`);
@@ -273,7 +282,7 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
   // ==========================================
   const runAccessory = async () => {
     if (!accFile) {
-      logMsg('❌ ERROR: Please upload the Accessory Excel file.');
+      logMsg('❌ ERROR: Please upload the Accessory file.');
       return;
     }
 
@@ -283,7 +292,6 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
     logMsg(`Loading data from ${accFile.name}...`);
 
     try {
-      // FIXED: Route CSV files to PapaParse, Excel files to SheetJS
       const data = accFile.name.toLowerCase().endsWith('.csv')
         ? await readCSVFile(accFile)
         : await readExcelFile(accFile);
@@ -295,7 +303,7 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
       const missingCols = keepCols.filter(col => !(col in firstRow));
       
       if (missingCols.length > 0) {
-        throw new Error(`Columns missing from input file: ${missingCols.join(', ')}`);
+        throw new Error(`Columns missing from input file:\n${missingCols.join(', ')}`);
       }
 
       logMsg('Cleaning text and missing values...');
@@ -331,8 +339,14 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
 
       let maxShipTos = 0;
       const finalData = Object.values(grouped).map(group => {
-        const row = { ...group };
-        delete row.shipTos;
+        const row: any = {};
+        // Explicitly set column order to match Pandas exactly
+        row["Hospital + Address"] = group["Hospital + Address"];
+        row["ShipTo Name"] = group["ShipTo Name"];
+        row["ShipTo Street"] = group["ShipTo Street"];
+        row["ShipTo City"] = group["ShipTo City"];
+        row["ShipTo Region"] = group["ShipTo Region"];
+        row["ShipTo PostalCode"] = group["ShipTo PostalCode"];
         
         const idsArray = Array.from(group.shipTos) as string[];
         maxShipTos = Math.max(maxShipTos, idsArray.length);
@@ -345,8 +359,8 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
         return row;
       });
 
-      logMsg('Generating CSV output...');
-      downloadCSV(finalData, 'accessory_location_combined_unique.csv');
+      logMsg('Generating Excel output...');
+      exportExcel(finalData, 'accesary_location_combined_unique VERSION 2.xlsx', 'ShipTo_Summary');
 
       logMsg('---------------------------------------------');
       logMsg(`Total original rows:            ${initialRows}`);
@@ -392,8 +406,15 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
       
       const extractIds = (row: any, keyword: string) => {
         return Object.keys(row)
-          .filter(k => k.includes(keyword) && row[k])
-          .map(k => String(row[k]).replace('.0', '').trim());
+          .filter(k => k.includes(keyword) && row[k] !== undefined && row[k] !== null)
+          .map(k => {
+            let val = String(row[k]).trim();
+            if (val.endsWith('.0')) {
+               val = val.substring(0, val.length - 2);
+            }
+            return val;
+          })
+          .filter(val => val !== "" && val.toLowerCase() !== "nan" && val.toLowerCase() !== "none");
       };
 
       const normalizedAcc = dataAcc.map(r => ({
@@ -438,15 +459,21 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
         }
         
         row.Extracted_IDs.forEach((id: string) => {
-          if (id && id !== "nan" && id !== "None") grouped[key].allIds.add(id);
+          grouped[key].allIds.add(id);
         });
       });
 
       logMsg('Pooling all unique IDs per site...');
       let maxIds = 0;
       const finalData = Object.values(grouped).map((group: any) => {
-        const row = { ...group };
-        delete row.allIds;
+        const row: any = {};
+        // Explicitly set column order to match Pandas exactly
+        row["Location Name"] = group["Location Name"];
+        row["Location Street"] = group["Location Street"];
+        row["Hospital + Address"] = group["Hospital + Address"];
+        row["City"] = group["City"];
+        row["State"] = group["State"];
+        row["Zip"] = group["Zip"];
         
         const idArray = Array.from(group.allIds) as string[];
         maxIds = Math.max(maxIds, idArray.length);
@@ -459,8 +486,8 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
         return row;
       });
 
-      logMsg('Generating master hospital location catalog...');
-      downloadCSV(finalData, 'Master_Hospital_Location_List_V2.csv');
+      logMsg('Generating master hospital location Excel catalog...');
+      exportExcel(finalData, 'Master_Hospital_Location_List VERSION 2.xlsx');
 
       if (onDataUpdated) {
         onDataUpdated(finalData);
@@ -482,6 +509,14 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  const getButtonText = () => {
+    if (isProcessing) return "Processing locally...";
+    if (subTab === 'proc') return "Run Combine & Clean";
+    if (subTab === 'ib') return "Run Location Combiner";
+    if (subTab === 'acc') return "Run Location Combiner";
+    return "Run Master Combiner";
   };
 
   return (
@@ -629,12 +664,12 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
               }`}
             >
               {isProcessing ? (
-                <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /><span>Processing locally...</span></>
+                <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /><span>{getButtonText()}</span></>
               ) : (
-                <><Play className="w-4 h-4 fill-white" /><span>Run Current Combiner</span></>
+                <><Play className="w-4 h-4 fill-white" /><span>{getButtonText()}</span></>
               )}
             </button>
-            <p className="text-[11px] text-slate-500 text-center">Output will automatically trigger a CSV download upon completion.</p>
+            <p className="text-[11px] text-slate-500 text-center">Output will automatically trigger a file download upon completion.</p>
           </div>
 
           {subTab === 'master' && (

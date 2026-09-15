@@ -82,19 +82,8 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
     });
   };
 
-  // ==========================================
-  // PANDAS EMULATION ENGINES (Guarantees 100% Match)
-  // ==========================================
-  
-  // 1. Matches Python `.fillna("").astype(str).str.strip()`
-  const getCleanVal = (v: any) => v === undefined || v === null ? "" : String(v).trim();
-  
-  // 2. Matches Python `groupby(..., dropna=False)`. Preserves raw types, raw spaces, and NaN behavior.
-  const getPandasKey = (v: any) => {
-    if (v === undefined || v === null || Number.isNaN(v)) return "NaN";
-    if (typeof v === 'number') return `NUM:${v}`;
-    return `STR:${v}`; // NO .trim() here! Preserves trailing spaces exactly like Python's Tab 4
-  };
+  // Helper for safe string parsing to match Pandas `.fillna("").astype(str)`
+  const getVal = (v: any) => v === undefined || v === null ? "" : String(v).trim();
 
   // ==========================================
   // TAB 1: PROCEDURE HOSPITAL CONSOLIDATION
@@ -121,7 +110,7 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
         const filtered = data.map((row: any) => {
           const newRow: any = {};
           keepCols.forEach(col => {
-            newRow[col] = row[col]; // Raw pass-through
+            newRow[col] = getVal(row[col]);
           });
           return newRow;
         });
@@ -133,13 +122,9 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
       logMsg('Cleaning missing text data & building address columns...');
 
       combinedData = combinedData.map(row => {
-        const hName = getCleanVal(row["HOSPITAL_NAME"]);
-        const add1 = getCleanVal(row["ADDRESSLINE1"]);
-        const add2 = getCleanVal(row["ADDRESSLINE2"]);
-        
-        row["HOSPITAL_NAME"] = hName;
-        row["ADDRESSLINE1"] = add1;
-        row["ADDRESSLINE2"] = add2;
+        const hName = row["HOSPITAL_NAME"];
+        const add1 = row["ADDRESSLINE1"];
+        const add2 = row["ADDRESSLINE2"];
         
         const hospAddRaw = `${hName}, ${add1}, ${add2}`;
         row["Hospital + Address"] = hospAddRaw.replace(/,\s*,/g, ',').replace(/^,|,$/g, '').trim();
@@ -156,9 +141,9 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
       let duplicateCount = 0;
 
       for (const row of combinedData) {
-        const dedupeKey = getPandasKey(row["DEFINITIVE_ID"]);
-        if (!seen.has(dedupeKey)) {
-          seen.add(dedupeKey);
+        const id = row["DEFINITIVE_ID"];
+        if (!seen.has(id)) {
+          seen.add(id);
           finalData.push(row);
         } else {
           duplicateCount++;
@@ -215,47 +200,36 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
       
       const grouped: Record<string, any> = {};
       data.forEach(row => {
-        // Python only applies .fillna("").astype(str).str.strip() to these 3 explicitly in Tab 2
-        const hName = getCleanVal(row["Location Name"]);
-        const street = getCleanVal(row["Location Street"]);
-        const acc = getCleanVal(row["Account Number"]);
-
+        const hName = getVal(row["Location Name"]);
+        const street = getVal(row["Location Street"]);
         const combinedAddress = `${hName}, ${street}`.replace(/,\s*,/g, ',').replace(/^,|,$/g, '').trim();
 
-        // Use Pandas grouping keys to prevent JS from losing rows
-        const key = [
-          getPandasKey(combinedAddress),
-          getPandasKey(hName),
-          getPandasKey(street),
-          getPandasKey(row["Location City"]),
-          getPandasKey(row["Location State"]),
-          getPandasKey(row["Location Zip"])
-        ].join('|||'); // Safer delimiter
+        // Exact Pandas groupby tuple logic
+        const key = `${combinedAddress}|${hName}|${street}|${getVal(row["Location City"])}|${getVal(row["Location State"])}|${getVal(row["Location Zip"])}`;
         
         if (!grouped[key]) {
           grouped[key] = {
             "Hospital + Address": combinedAddress,
             "Location Name": hName,
             "Location Street": street,
-            "Location City": row["Location City"], // Pass raw data through exactly like Python
-            "Location State": row["Location State"],
-            "Location Zip": row["Location Zip"],
+            "Location City": getVal(row["Location City"]),
+            "Location State": getVal(row["Location State"]),
+            "Location Zip": getVal(row["Location Zip"]),
             accounts: new Set<string>()
           };
         }
 
-        if (acc !== "" && acc.toLowerCase() !== "nan" && acc.toLowerCase() !== "none") {
+        const acc = getVal(row["Account Number"]);
+        if (acc && acc.toLowerCase() !== "nan" && acc.toLowerCase() !== "none") {
           grouped[key].accounts.add(acc);
         }
       });
 
-      // PANDAS EMULATION PASS 1: Calculate global maximum accounts across entire dataframe
       let maxAccounts = 0;
       Object.values(grouped).forEach(group => {
         maxAccounts = Math.max(maxAccounts, group.accounts.size);
       });
 
-      // PANDAS EMULATION PASS 2: Explicitly build every column to match Pandas logic
       const finalData = Object.values(grouped).map(group => {
         const row: any = {};
         row["Hospital + Address"] = group["Hospital + Address"];
@@ -326,45 +300,35 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
       
       const grouped: Record<string, any> = {};
       data.forEach(row => {
-        const sName = getCleanVal(row["ShipTo Name"]);
-        const street = getCleanVal(row["ShipTo Street"]);
-        const sid = getCleanVal(row["ShipToID"]);
-
+        const sName = getVal(row["ShipTo Name"]);
+        const street = getVal(row["ShipTo Street"]);
         const combinedAddress = `${sName}, ${street}`.replace(/,\s*,/g, ',').replace(/^,|,$/g, '').trim();
 
-        const key = [
-          getPandasKey(combinedAddress),
-          getPandasKey(sName),
-          getPandasKey(street),
-          getPandasKey(row["ShipTo City"]),
-          getPandasKey(row["ShipTo Region"]),
-          getPandasKey(row["ShipTo PostalCode"])
-        ].join('|||');
+        const key = `${combinedAddress}|${sName}|${street}|${getVal(row["ShipTo City"])}|${getVal(row["ShipTo Region"])}|${getVal(row["ShipTo PostalCode"])}`;
         
         if (!grouped[key]) {
           grouped[key] = {
             "Hospital + Address": combinedAddress,
             "ShipTo Name": sName,
             "ShipTo Street": street,
-            "ShipTo City": row["ShipTo City"], // Preserve raw data
-            "ShipTo Region": row["ShipTo Region"], // Preserve raw data
-            "ShipTo PostalCode": row["ShipTo PostalCode"], // Preserve raw data
+            "ShipTo City": getVal(row["ShipTo City"]),
+            "ShipTo Region": getVal(row["ShipTo Region"]),
+            "ShipTo PostalCode": getVal(row["ShipTo PostalCode"]),
             shipTos: new Set<string>()
           };
         }
 
-        if (sid !== "" && sid.toLowerCase() !== "nan" && sid.toLowerCase() !== "none") {
+        const sid = getVal(row["ShipToID"]);
+        if (sid && sid.toLowerCase() !== "nan" && sid.toLowerCase() !== "none") {
           grouped[key].shipTos.add(sid);
         }
       });
 
-      // PANDAS EMULATION PASS 1: Calculate global maximum
       let maxShipTos = 0;
       Object.values(grouped).forEach(group => {
         maxShipTos = Math.max(maxShipTos, group.shipTos.size);
       });
 
-      // PANDAS EMULATION PASS 2: Explicitly build every column
       const finalData = Object.values(grouped).map(group => {
         const row: any = {};
         row["Hospital + Address"] = group["Hospital + Address"];
@@ -404,7 +368,7 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
   };
 
   // ==========================================
-  // TAB 4: MASTER COMBINER
+  // TAB 4: MASTER COMBINER (PANDAS EMULATOR)
   // ==========================================
   const runMasterCombiner = async () => {
     if (!masterAccFile || !masterIbFile) {
@@ -427,95 +391,94 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
         ? await readCSVFile(masterIbFile) 
         : await readExcelFile(masterIbFile);
 
-      logMsg('Normalizing column schemas across both datasets...');
+      logMsg('Normalizing column schemas exactly like Pandas...');
+      const combined: any[] = [];
       
-      const normalizeData = (data: any[], renameMap: Record<string, string>, idKeyword: string) => {
-        return data.map(r => {
-          const newRow: any = { ...r };
+      // Process ACC - Strip column headers ONLY, exactly like Python Tab 4
+      dataAcc.forEach(row => {
+        const newRow: any = {};
+        for (let col in row) {
+          const cleanCol = col.trim();
+          let finalCol = cleanCol;
+          if (finalCol === "ShipTo Name") finalCol = "Location Name";
+          else if (finalCol === "ShipTo Street") finalCol = "Location Street";
+          else if (finalCol === "ShipTo City") finalCol = "City";
+          else if (finalCol === "ShipTo Region") finalCol = "State";
+          else if (finalCol === "ShipTo PostalCode") finalCol = "Zip";
           
-          // Pure Rename logic: touches NO string formatting, exactly like Pandas df.rename()
-          Object.entries(renameMap).forEach(([oldK, newK]) => {
-            if (oldK in newRow) {
-              newRow[newK] = newRow[oldK];
-              delete newRow[oldK];
-            }
-          });
+          if (finalCol.includes("ShipToID")) {
+            finalCol = finalCol.replace("ShipToID", "ID");
+          }
+          newRow[finalCol] = row[col];
+        }
+        combined.push(newRow);
+      });
 
-          // Flatten IDs exactly like Pandas apply + dict.fromkeys block
-          const idKeys = Object.keys(newRow).filter(k => k.includes(idKeyword));
-          newRow.Extracted_IDs = [];
-          idKeys.forEach(k => {
-            const val = newRow[k];
-            if (val !== undefined && val !== null) {
-              let strVal = String(val).trim();
-              if (strVal.endsWith('.0')) strVal = strVal.substring(0, strVal.length - 2);
-              if (strVal !== "" && strVal.toLowerCase() !== "nan" && strVal.toLowerCase() !== "none") {
-                newRow.Extracted_IDs.push(strVal);
-              }
-            }
-          });
+      // Process IB - Strip column headers ONLY
+      dataIb.forEach(row => {
+        const newRow: any = {};
+        for (let col in row) {
+          const cleanCol = col.trim();
+          let finalCol = cleanCol;
+          if (finalCol === "Location City") finalCol = "City";
+          else if (finalCol === "Location State") finalCol = "State";
+          else if (finalCol === "Location Zip") finalCol = "Zip";
+          
+          if (finalCol.includes("Account Number")) {
+            finalCol = finalCol.replace("Account Number", "ID");
+          }
+          newRow[finalCol] = row[col];
+        }
+        combined.push(newRow);
+      });
 
-          return newRow;
-        });
-      };
-
-      const normalizedAcc = normalizeData(dataAcc, {
-        "ShipTo Name": "Location Name",
-        "ShipTo Street": "Location Street",
-        "ShipTo City": "City",
-        "ShipTo Region": "State",
-        "ShipTo PostalCode": "Zip"
-      }, "ShipToID");
-
-      const normalizedIb = normalizeData(dataIb, {
-        "Location City": "City",
-        "Location State": "State",
-        "Location Zip": "Zip"
-      }, "Account Number");
-
-      logMsg('Combining datasets...');
-      const combined = [...normalizedAcc, ...normalizedIb];
       const initialRows = combined.length;
-
       logMsg('Grouping identical hospital locations across datasets...');
+      
       const grouped: Record<string, any> = {};
+      const location_cols = ["Location Name", "Location Street", "Hospital + Address", "City", "State", "Zip"];
       
       combined.forEach(row => {
-        // Python Tab 4 ONLY renames columns, it NEVER calls .strip(). 
-        // Using strict getPandasKey prevents JS from merging the 60 rows that had trailing spaces or float values.
-        const key = [
-          getPandasKey(row["Location Name"]),
-          getPandasKey(row["Location Street"]),
-          getPandasKey(row["Hospital + Address"]),
-          getPandasKey(row["City"]),
-          getPandasKey(row["State"]),
-          getPandasKey(row["Zip"])
-        ].join('|||');
+        // PANDAS EMULATION: Grouping key that respects exact data types and NaN logic. NO TRIMMING!
+        const key = location_cols.map(col => {
+          const v = row[col];
+          if (v === undefined || v === null || Number.isNaN(v) || v === "") return "NaN";
+          if (typeof v === 'number') return `NUM:${v}`;
+          return `STR:${v}`; 
+        }).join('|||');
 
         if (!grouped[key]) {
           grouped[key] = {
-            "Location Name": row["Location Name"],
-            "Location Street": row["Location Street"],
-            "Hospital + Address": row["Hospital + Address"],
-            "City": row["City"],
-            "State": row["State"],
-            "Zip": row["Zip"],
-            allIds: new Set<string>()
+            "Location Name": row["Location Name"] === undefined ? "" : row["Location Name"],
+            "Location Street": row["Location Street"] === undefined ? "" : row["Location Street"],
+            "Hospital + Address": row["Hospital + Address"] === undefined ? "" : row["Hospital + Address"],
+            "City": row["City"] === undefined ? "" : row["City"],
+            "State": row["State"] === undefined ? "" : row["State"],
+            "Zip": row["Zip"] === undefined ? "" : row["Zip"],
+            allIds: new Set<string>() // dict.fromkeys equivalent
           };
         }
         
-        row.Extracted_IDs.forEach((id: string) => {
-          grouped[key].allIds.add(id);
+        // Find all columns containing "ID" and cleanly extract them
+        Object.keys(row).forEach(k => {
+          if (k.includes("ID")) {
+            const val = row[k];
+            if (val !== undefined && val !== null && !Number.isNaN(val) && val !== "") {
+              let strVal = String(val).trim();
+              if (strVal.endsWith('.0')) strVal = strVal.substring(0, strVal.length - 2);
+              if (strVal !== "" && strVal.toLowerCase() !== "nan" && strVal.toLowerCase() !== "none") {
+                grouped[key].allIds.add(strVal);
+              }
+            }
+          }
         });
       });
 
-      // PANDAS EMULATION PASS 1: Calculate global maximum
       let maxIds = 0;
       Object.values(grouped).forEach((g: any) => {
         maxIds = Math.max(maxIds, g.allIds.size);
       });
 
-      // PANDAS EMULATION PASS 2: Explicitly build every column
       const finalData = Object.values(grouped).map((group: any) => {
         const row: any = {};
         row["Location Name"] = group["Location Name"];
@@ -526,12 +489,10 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
         row["Zip"] = group["Zip"];
         
         const idArray = Array.from(group.allIds) as string[];
-        
         for (let i = 0; i < Math.max(1, maxIds); i++) {
           const colName = i === 0 ? "ID" : `ID ${i + 1}`;
           row[colName] = idArray[i] || "";
         }
-        
         return row;
       });
 

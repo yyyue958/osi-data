@@ -103,7 +103,6 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
         
-        // FIX 1: cellDates: true forces SheetJS to convert Excel Serial Numbers to real JS Dates
         const data = XLSX.utils.sheet_to_json(ws, { cellDates: true }) as AccessoryOrderRow[];
 
         setUploadedData(data);
@@ -186,25 +185,36 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
           return;
         }
 
-        // FIX 2: Bulletproof Pandas-style Date Parsing
         let billingYear = 2023; // Safe default
         const rawDate = row['Billing Date'];
+        let formattedBillingDate = rawDate; // Fallback to whatever came in
 
         if (rawDate !== undefined && rawDate !== null) {
+          let jsDate: Date | null = null;
+          
           if (rawDate instanceof Date) {
-            billingYear = rawDate.getFullYear();
+            jsDate = rawDate;
           } else if (typeof rawDate === 'number') {
-            // Failsafe: Convert Excel serial number to JS Date if SheetJS missed it
-            const jsDate = new Date((rawDate - 25569) * 86400 * 1000);
-            billingYear = new Date(jsDate.getTime() + Math.abs(jsDate.getTimezoneOffset() * 60000)).getFullYear();
+            // Convert Excel serial number to JS Date
+            const tempDate = new Date((rawDate - 25569) * 86400 * 1000);
+            jsDate = new Date(tempDate.getTime() + Math.abs(tempDate.getTimezoneOffset() * 60000));
           } else {
-            // Failsafe: Try parsing as string
+            // Try parsing string to Date
             const parsedDate = new Date(rawDate);
             if (!isNaN(parsedDate.getFullYear())) {
-              billingYear = parsedDate.getFullYear();
-            } else if (row['Billing Year']) {
-              billingYear = Number(row['Billing Year']);
+              jsDate = parsedDate;
             }
+          }
+
+          if (jsDate) {
+            billingYear = jsDate.getFullYear();
+            
+            // Format to "11/8/2018 12:00:00 AM" exactly
+            const datePart = jsDate.toLocaleDateString('en-US'); // e.g., "11/8/2018"
+            const timePart = jsDate.toLocaleTimeString('en-US'); // e.g., "12:00:00 AM"
+            formattedBillingDate = `${datePart} ${timePart}`;
+          } else if (row['Billing Year']) {
+            billingYear = Number(row['Billing Year']);
           }
         } else if (row['Billing Year']) {
           billingYear = Number(row['Billing Year']);
@@ -212,6 +222,7 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
 
         filtered.push({
           ...row,
+          'Billing Date': formattedBillingDate, // Overwrite serial number with clean format string
           'Billing Year': billingYear
         });
       });

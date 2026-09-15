@@ -82,20 +82,19 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
     });
   };
 
-  // ==========================================
-  // STRICT PANDAS DATA EMULATORS
-  // ==========================================
-
-  // Mimics: df.fillna("").astype(str)
+  // Safe fallback for Tabs 1-3
   const getVal = (v: any) => v === undefined || v === null ? "" : String(v).trim();
 
-  // Mimics Pandas exact object hashing for groupby(dropna=False)
-  // This explicitly prevents JS from merging empty strings ("") and true missing values (NaN)
-  // which restores the 60 rows that Python kept separated.
-  const getPandasKey = (v: any) => {
-    if (v === undefined || v === null || Number.isNaN(v)) return "NaN";
-    if (typeof v === 'number') return `NUM:${v}`;
-    return `STR:${v}`; // Do not trim here! Preserves trailing spaces to match Python exactly.
+  // ==========================================
+  // TAB 4: STRICT DATA STANDARDIZER
+  // ==========================================
+  // This completely fixes the 60-row duplicate bug by forcing all locations 
+  // into an identical, clean, uppercase string format before deduplicating.
+  const standardizeLocation = (v: any) => {
+    if (v === undefined || v === null || Number.isNaN(v)) return "";
+    const strVal = String(v).trim();
+    if (strVal.toLowerCase() === 'nan' || strVal.toLowerCase() === 'none') return "";
+    return strVal.toUpperCase();
   };
 
   // ==========================================
@@ -403,7 +402,7 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
         ? await readCSVFile(masterIbFile) 
         : await readExcelFile(masterIbFile);
 
-      logMsg('Normalizing column schemas strictly tracking Pandas...');
+      logMsg('Standardizing columns (Case, Spaces, Blank fields)...');
       
       const normalizeData = (data: any[], renameMap: Record<string, string>, idKeyword: string) => {
         return data.map(r => {
@@ -416,8 +415,17 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
             }
           });
 
+          // Standardize the 6 location columns before grouping to enforce perfect merging
+          newRow["Location Name"] = standardizeLocation(newRow["Location Name"]);
+          newRow["Location Street"] = standardizeLocation(newRow["Location Street"]);
+          newRow["Hospital + Address"] = standardizeLocation(newRow["Hospital + Address"]);
+          newRow["City"] = standardizeLocation(newRow["City"]);
+          newRow["State"] = standardizeLocation(newRow["State"]);
+          newRow["Zip"] = standardizeLocation(newRow["Zip"]);
+
           const idKeys = Object.keys(newRow).filter(k => k.includes(idKeyword));
           newRow.Extracted_IDs = [];
+          
           idKeys.forEach(k => {
             const val = newRow[k];
             if (val !== undefined && val !== null) {
@@ -451,19 +459,12 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
       const combined = [...normalizedAcc, ...normalizedIb];
       const initialRows = combined.length;
 
-      logMsg('Grouping identical hospital locations strictly via Python emulator...');
+      logMsg('Grouping identical locations and tracking strict ID Pools...');
       const grouped: Record<string, any> = {};
       
       combined.forEach(row => {
-        // Enforce Python's strict Type-and-NaN segregation rules
-        const key = [
-          getPandasKey(row["Location Name"]),
-          getPandasKey(row["Location Street"]),
-          getPandasKey(row["Hospital + Address"]),
-          getPandasKey(row["City"]),
-          getPandasKey(row["State"]),
-          getPandasKey(row["Zip"])
-        ].join('|||');
+        // Because data is already standardized, we can safely merge with a simple |
+        const key = `${row["Location Name"]}|${row["Location Street"]}|${row["Hospital + Address"]}|${row["City"]}|${row["State"]}|${row["Zip"]}`;
 
         if (!grouped[key]) {
           grouped[key] = {
@@ -473,10 +474,12 @@ export const LocationConsolidationStep: React.FC<LocationConsolidationStepProps>
             "City": row["City"],
             "State": row["State"],
             "Zip": row["Zip"],
-            allIds: new Set<string>()
+            allIds: new Set<string>() // Enforces strictly unique IDs!
           };
         }
         
+        // Add extracted IDs to the Set. 
+        // If it's a duplicate ID, the Set ignores it. If it's new, it keeps it for ID 2, ID 3, etc.
         row.Extracted_IDs.forEach((id: string) => {
           grouped[key].allIds.add(id);
         });

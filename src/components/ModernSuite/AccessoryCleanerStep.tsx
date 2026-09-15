@@ -102,7 +102,9 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
         const wb = XLSX.read(bstr, { type: 'binary' });
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
-        const data = XLSX.utils.sheet_to_json(ws) as AccessoryOrderRow[];
+        
+        // FIX 1: cellDates: true forces SheetJS to convert Excel Serial Numbers to real JS Dates
+        const data = XLSX.utils.sheet_to_json(ws, { cellDates: true }) as AccessoryOrderRow[];
 
         setUploadedData(data);
         setConfig(prev => ({ ...prev, inputFileName: file.name }));
@@ -184,8 +186,29 @@ export const AccessoryCleanerStep: React.FC<AccessoryCleanerStepProps> = ({
           return;
         }
 
-        const billingDate = new Date(row['Billing Date']);
-        const billingYear = isNaN(billingDate.getFullYear()) ? row['Billing Year'] || 2023 : billingDate.getFullYear();
+        // FIX 2: Bulletproof Pandas-style Date Parsing
+        let billingYear = 2023; // Safe default
+        const rawDate = row['Billing Date'];
+
+        if (rawDate !== undefined && rawDate !== null) {
+          if (rawDate instanceof Date) {
+            billingYear = rawDate.getFullYear();
+          } else if (typeof rawDate === 'number') {
+            // Failsafe: Convert Excel serial number to JS Date if SheetJS missed it
+            const jsDate = new Date((rawDate - 25569) * 86400 * 1000);
+            billingYear = new Date(jsDate.getTime() + Math.abs(jsDate.getTimezoneOffset() * 60000)).getFullYear();
+          } else {
+            // Failsafe: Try parsing as string
+            const parsedDate = new Date(rawDate);
+            if (!isNaN(parsedDate.getFullYear())) {
+              billingYear = parsedDate.getFullYear();
+            } else if (row['Billing Year']) {
+              billingYear = Number(row['Billing Year']);
+            }
+          }
+        } else if (row['Billing Year']) {
+          billingYear = Number(row['Billing Year']);
+        }
 
         filtered.push({
           ...row,
